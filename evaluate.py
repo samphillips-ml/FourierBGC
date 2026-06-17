@@ -9,6 +9,9 @@ is the form Appendix B's Table B1 number (0.52 for nitrate) is in.
 
     python evaluate.py --model transformer --target_var NITRATE \
         --checkpoint results/NITRATE/transformer/best.pt
+
+    python evaluate.py --model ppcon --target_var NITRATE \
+        --checkpoint_dir results_ppcon/NITRATE/2024-01-01/model --epoch 200
 """
 import argparse
 
@@ -18,6 +21,7 @@ from torch.utils.data import DataLoader
 
 from dataset import FloatDataset
 from models import RawTransformerProbe, RawCNNProbe
+from ppcon_eval import load_ppcon_checkpoint, ppcon_forward
 from train import DEPTH_GRIDS, make_model
 
 # from utils_analysis.py, dict_ga: [[lat_min, lat_max], [lon_min, lon_max]]
@@ -57,18 +61,28 @@ def assign_season(day):
     return None
 
 
-def per_profile_rmse(model, dataset, depth_levels, target_var, device):
+def per_profile_rmse(model, dataset, depth_levels, target_var, device, is_ppcon=False):
     """Runs every profile through the model one at a time (matches PPCon's
     own get_reconstruction, which also iterates with shuffle and no batching),
-    returns per-profile RMSE plus the lat/lon/season needed for bucketing."""
+    returns per-profile RMSE plus the lat/lon/season needed for bucketing.
+    For the PPCon baseline (is_ppcon=True), `model` is the five-model tuple
+    from load_ppcon_checkpoint and the forward pass goes through ppcon_forward
+    instead of the RawCNNProbe/RawTransformerProbe call."""
     loader = DataLoader(dataset, batch_size=1, shuffle=False)
-    model.eval()
+    if not is_ppcon:
+        model.eval()
 
     records = []
     with torch.no_grad():
-        for _year, day_rad, lat, lon, temp, psal, doxy, target in loader:
-            profile = torch.stack([temp, psal, doxy], dim=-1).to(device)
-            pred = model(profile, depth_levels).squeeze()      # (200,)
+        for year, day_rad, lat, lon, temp, psal, doxy, target in loader:
+            if is_ppcon:
+                year, day_rad = year.to(device), day_rad.to(device)
+                lat, lon = lat.to(device), lon.to(device)
+                temp, psal, doxy = temp.to(device), psal.to(device), doxy.to(device)
+                pred = ppcon_forward(model, year, day_rad, lat, lon, temp, psal, doxy).squeeze()
+            else:
+                profile = torch.stack([temp, psal, doxy], dim=-1).to(device)
+                pred = model(profile, depth_levels).squeeze()      # (200,)
             true = target.squeeze().to(device)                  # (200,)
 
             if target_var == "NITRATE":
@@ -119,21 +133,37 @@ def summarize(records):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--model", choices=["transformer", "cnn"], required=True)
+    p.add_argument("--model", choices=["transformer", "cnn", "ppcon"], required=True)
     p.add_argument("--target_var", choices=["NITRATE", "CHLA", "BBP700"], required=True)
-    p.add_argument("--checkpoint", required=True)
+    p.add_argument("--checkpoint", help="required for --model transformer/cnn")
+    p.add_argument("--checkpoint_dir", help="required for --model ppcon: the .../model/ "
+                   "directory holding model_{day,year,lat,lon,conv}_{epoch}.pt")
+    p.add_argument("--epoch", type=int, help="required for --model ppcon")
+    p.add_argument("--dp_rate", type=float, default=0.2,
+                   help="ppcon Conv1dMed dropout rate; inactive in eval mode, value has no effect")
     p.add_argument("--data_dir", default="data")
     args = p.parse_args()
+
+    if args.model == "ppcon":
+        if not args.checkpoint_dir or args.epoch is None:
+            p.error("--model ppcon requires --checkpoint_dir and --epoch")
+    elif not args.checkpoint:
+        p.error("--model transformer/cnn requires --checkpoint")
 
     device = "cuda" if torch.cuda.is_available() else (
         "mps" if torch.backends.mps.is_available() else "cpu")
 
-    model = make_model(args.model).to(device)
-    model.load_state_dict(torch.load(args.checkpoint, map_location=device))
     depth_levels = DEPTH_GRIDS[args.target_var].to(device)
-
     test_ds = FloatDataset(f"{args.data_dir}/{args.target_var}/float_ds_sf_test.csv")
-    records = per_profile_rmse(model, test_ds, depth_levels, args.target_var, device)
+
+    if args.model == "ppcon":
+        model = load_ppcon_checkpoint(args.checkpoint_dir, args.epoch, device, dp_rate=args.dp_rate)
+        records = per_profile_rmse(model, test_ds, depth_levels, args.target_var, device, is_ppcon=True)
+    else:
+        model = make_model(args.model).to(device)
+        model.load_state_dict(torch.load(args.checkpoint, map_location=device))
+        records = per_profile_rmse(model, test_ds, depth_levels, args.target_var, device)
+
     summarize(records)
 
 
