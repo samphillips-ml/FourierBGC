@@ -20,8 +20,8 @@ _PPCON_BASELINE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "
 if _PPCON_BASELINE_DIR not in sys.path:
     sys.path.insert(0, _PPCON_BASELINE_DIR)
 
-from ppcon.train.conv1med_dp import Conv1dMed  # noqa: E402
-from ppcon.train.mlp import MLPDay, MLPYear, MLPLat, MLPLon  # noqa: E402
+from ppcon.train.conv1med_dp import Conv1dMed  # noqa: E402  # type: ignore[import]
+from ppcon.train.mlp import MLPDay, MLPYear, MLPLat, MLPLon  # noqa: E402  # type: ignore[import]
 
 
 def load_ppcon_checkpoint(model_dir, epoch, device, dp_rate=0.2):
