@@ -37,7 +37,7 @@ def make_model(name):
     raise ValueError(f"unknown model {name}")
 
 
-def run_epoch(model, loader, depth_levels, device, optimizer=None):
+def run_epoch(model, loader, depth_levels, device, optimizer=None, max_grad_norm=1.0):
     train_mode = optimizer is not None
     model.train() if train_mode else model.eval()
 
@@ -54,11 +54,26 @@ def run_epoch(model, loader, depth_levels, device, optimizer=None):
             if train_mode:
                 optimizer.zero_grad()
                 loss.backward()
+                # caps any single batch's gradient norm, so one bad batch
+                # can't throw a destabilizing step (this is what epoch 68's
+                # spike in an earlier run looked like)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
                 optimizer.step()
 
             losses.append(loss.item())
 
     return np.mean(losses)
+
+
+def make_scheduler(optimizer, total_epochs, warmup_epochs=5):
+    # linear warmup for warmup_epochs, then cosine decay to 0 over the rest.
+    # standard transformer recipe, not PPCon-specific, no fidelity concern.
+    def lr_lambda(epoch):
+        if epoch < warmup_epochs:
+            return (epoch + 1) / warmup_epochs
+        progress = (epoch - warmup_epochs) / max(1, total_epochs - warmup_epochs)
+        return 0.5 * (1 + np.cos(np.pi * progress))
+    return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
 
 def main():
@@ -71,7 +86,12 @@ def main():
     p.add_argument("--results_dir", default="results")
     args = p.parse_args()
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    if torch.cuda.is_available():
+        device = "cuda"
+    elif torch.backends.mps.is_available():
+        device = "mps"
+    else:
+        device = "cpu"
     print(f"device: {device}, model: {args.model}, target: {args.target_var}")
 
     train_ds = FloatDataset(os.path.join(DATA_DIR, args.target_var, "float_ds_sf_train.csv"))
@@ -82,6 +102,7 @@ def main():
     model = make_model(args.model).to(device)
     depth_levels = DEPTH_GRIDS[args.target_var].to(device)
     optimizer = Adam(model.parameters(), lr=args.lr)
+    scheduler = make_scheduler(optimizer, args.epochs)
 
     save_dir = os.path.join(args.results_dir, args.target_var, args.model)
     os.makedirs(save_dir, exist_ok=True)
@@ -92,8 +113,10 @@ def main():
         for ep in range(args.epochs):
             train_mse = run_epoch(model, train_loader, depth_levels, device, optimizer)
             test_mse = run_epoch(model, test_loader, depth_levels, device, optimizer=None)
+            scheduler.step()
 
-            line = f"epoch {ep+1:4d}  train_mse {train_mse:.5f}  test_mse {test_mse:.5f}"
+            line = (f"epoch {ep+1:4d}  train_mse {train_mse:.5f}  test_mse {test_mse:.5f}"
+                    f"  lr {scheduler.get_last_lr()[0]:.6f}")
             print(line)
             log.write(line + "\n")
 
