@@ -2,3 +2,4 @@
 *.slurm
 *.pt
 *.txt
+__pychache__/
