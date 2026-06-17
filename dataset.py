@@ -45,9 +45,9 @@ class FloatDataset(Dataset):
         temp, label_temp = from_string_to_tensor(self.samples[4])
         psal, label_psal = from_string_to_tensor(self.samples[5])
         doxy, label_doxy = from_string_to_tensor(self.samples[6])
-        nitrate, label_nitrate = from_string_to_tensor(self.samples[7])
+        target, label_target = from_string_to_tensor(self.samples[7])
 
         label = label_doxy * label_psal * label_temp  # the label is equal to one only if I have data valid for all
         # depth
 
-        return year, day_rad, lat, lon, temp, psal, doxy, nitrate
+        return year, day_rad, lat, lon, temp, psal, doxy, target
