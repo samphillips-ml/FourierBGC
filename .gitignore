@@ -16,6 +16,7 @@ venv/
 env/
 *.egg-info/
 .eggs/
+.venv-ppcon/
 
 # Jupyter
 .ipynb_checkpoints/
