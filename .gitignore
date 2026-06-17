@@ -1,6 +1,33 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.Python
 .venv/
-*.slurm
+venv/
+env/
+*.egg-info/
+.eggs/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# training artifacts
+results/
 *.pt
-*.txt
-__pychache__/
-*DS***
+*.pth
+*.ckpt
+
+
+# editor
+.vscode/
+.idea/
+*.swp
