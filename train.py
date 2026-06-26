@@ -1,9 +1,12 @@
 """
-Trains RawTransformerProbe or RawCNNProbe on PPCon's own dataset (T/S/O only,
-no lat/lon/day/year). PPCon's published RMSE is the comparison target, not
-something retrained here.
+Trains RawTransformerProbe, RawTransformerScalarProbe, or RawCNNProbe on
+PPCon's own dataset. transformer/cnn use T/S/O only, no lat/lon/day/year.
+transformer_scalar adds those four scalars back in as constant-valued depth
+channels (broadcast here, no learned encoding). PPCon's published RMSE is the
+comparison target, not something retrained here.
 
     python train.py --model transformer --target_var NITRATE
+    python train.py --model transformer_scalar --target_var NITRATE
     python train.py --model cnn --target_var CHLA --epochs 100
 """
 import argparse
@@ -16,7 +19,7 @@ from torch.nn.functional import mse_loss
 from torch.utils.data import DataLoader
 
 from dataset import FloatDataset
-from models import RawTransformerProbe, RawCNNProbe
+from models import RawTransformerProbe, RawTransformerScalarProbe, RawCNNProbe
 
 # PPCon's own depth grids (dict.py): nitrate 0-1000m @ 5m, chla/bbp700 0-200m @ 1m.
 # both land at 200 points but they're physically different distances.
@@ -32,21 +35,33 @@ DATA_DIR = "data"
 def make_model(name):
     if name == "transformer":
         return RawTransformerProbe()
+    elif name == "transformer_scalar":
+        return RawTransformerScalarProbe()
     elif name == "cnn":
         return RawCNNProbe()
     raise ValueError(f"unknown model {name}")
 
 
-def run_epoch(model, loader, depth_levels, device, optimizer=None, max_grad_norm=1.0):
+def run_epoch(model, loader, depth_levels, device, optimizer=None, max_grad_norm=1.0,
+              use_scalars=False):
     train_mode = optimizer is not None
     model.train() if train_mode else model.eval()
 
+    n_depth = depth_levels.shape[0]
     losses = []
     with torch.set_grad_enabled(train_mode):
-        for _year, _day_rad, _lat, _lon, temp, psal, doxy, target in loader:
+        for year, day_rad, lat, lon, temp, psal, doxy, target in loader:
             # raw probe: T/S/O only, geolocation/date dropped on purpose
             profile = torch.stack([temp, psal, doxy], dim=-1).to(device)  # (B, D, 3)
             target = target.unsqueeze(-1).to(device)                      # (B, D, 1)
+
+            if use_scalars:
+                # broadcast each scalar to a constant-valued depth channel,
+                # no learned encoding (that's the point of this ablation)
+                b = profile.shape[0]
+                scalars = torch.stack([lat, lon, day_rad, year], dim=-1).to(device)  # (B, 4)
+                scalars = scalars.view(b, 1, 4).expand(b, n_depth, 4)
+                profile = torch.cat([profile, scalars], dim=-1)  # (B, D, 7)
 
             output = model(profile, depth_levels)
             loss = mse_loss(output, target)
@@ -78,7 +93,7 @@ def make_scheduler(optimizer, total_epochs, warmup_epochs=5):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--model", choices=["transformer", "cnn"], required=True)
+    p.add_argument("--model", choices=["transformer", "transformer_scalar", "cnn"], required=True)
     p.add_argument("--target_var", choices=["NITRATE", "CHLA", "BBP700"], required=True)
     p.add_argument("--epochs", type=int, default=100)
     p.add_argument("--lr", type=float, default=1e-3)
@@ -100,6 +115,7 @@ def main():
     test_loader = DataLoader(test_ds, batch_size=args.batch_size, shuffle=False)
 
     model = make_model(args.model).to(device)
+    use_scalars = args.model == "transformer_scalar"
     depth_levels = DEPTH_GRIDS[args.target_var].to(device)
     optimizer = Adam(model.parameters(), lr=args.lr)
     scheduler = make_scheduler(optimizer, args.epochs)
@@ -111,8 +127,10 @@ def main():
     best_test_mse = float("inf")
     with open(log_path, "w") as log:
         for ep in range(args.epochs):
-            train_mse = run_epoch(model, train_loader, depth_levels, device, optimizer)
-            test_mse = run_epoch(model, test_loader, depth_levels, device, optimizer=None)
+            train_mse = run_epoch(model, train_loader, depth_levels, device, optimizer,
+                                   use_scalars=use_scalars)
+            test_mse = run_epoch(model, test_loader, depth_levels, device, optimizer=None,
+                                  use_scalars=use_scalars)
             scheduler.step()
 
             line = (f"epoch {ep+1:4d}  train_mse {train_mse:.5f}  test_mse {test_mse:.5f}"

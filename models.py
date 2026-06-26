@@ -1,7 +1,10 @@
 """
-Raw probes for the PPCon comparison. Both take T/S/O only, no lat/lon/day/year.
-Both return per-depth predictions, shape (B, D, 1), so train.py can swap models
-without touching the loss/eval code.
+Raw probes for the PPCon comparison. RawTransformerProbe and RawCNNProbe take
+T/S/O only, no lat/lon/day/year. RawTransformerScalarProbe adds those four
+scalars back in as constant-valued depth channels (no learned encoding), to
+test whether PPCon's MLP encoding cost or the information itself is what
+hurts on nitrate. All three return per-depth predictions, shape (B, D, 1), so
+train.py can swap models without touching the loss/eval code.
 """
 import math
 
@@ -44,6 +47,21 @@ class RawTransformerProbe(nn.Module):
         x = x + self._sinusoidal_pe(depth_levels, profile.device).unsqueeze(0)
         x = self.transformer(x)
         return self.head(x)  # (B, D, 1)
+
+
+class RawTransformerScalarProbe(RawTransformerProbe):
+    """Same as RawTransformerProbe, but takes 7 channels instead of 3: T/S/O
+    plus lat/lon/day_rad/year, each broadcast to a constant-valued channel
+    across all 200 depth points before the transformer sees them (no learned
+    scalar encoding, unlike PPCon's four 3-layer MLPs). Ablation target: does
+    PPCon's geolocation/date *information* hurt on nitrate, or just its
+    expensive MLP encoding? Broadcasting is done by the caller (train.py /
+    evaluate.py), not here, so this class is just RawTransformerProbe with
+    n_in=7 and no other changes."""
+
+    def __init__(self, n_in=7, d_model=64, nhead=4, num_layers=2, dropout=0.1):
+        super().__init__(n_in=n_in, d_model=d_model, nhead=nhead,
+                          num_layers=num_layers, dropout=dropout)
 
 
 class RawCNNProbe(nn.Module):
@@ -125,7 +143,9 @@ def count_params(model):
 
 if __name__ == "__main__":
     t = RawTransformerProbe()
+    ts = RawTransformerScalarProbe()
     c = RawCNNProbe()
-    print(f"RawTransformerProbe: {count_params(t):,} params")
-    print(f"RawCNNProbe:         {count_params(c):,} params")
-    print(f"PPCon total:         412,049 params  (158,800 in 4 scalar MLPs, 253,249 in conv stack)")
+    print(f"RawTransformerProbe:       {count_params(t):,} params")
+    print(f"RawTransformerScalarProbe: {count_params(ts):,} params")
+    print(f"RawCNNProbe:               {count_params(c):,} params")
+    print(f"PPCon total:               412,049 params  (158,800 in 4 scalar MLPs, 253,249 in conv stack)")

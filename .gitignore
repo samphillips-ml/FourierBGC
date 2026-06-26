@@ -32,3 +32,6 @@ results/
 .vscode/
 .idea/
 *.swp
+
+# slurm scripts
+slurm/*

@@ -10,6 +10,9 @@ is the form Appendix B's Table B1 number (0.52 for nitrate) is in.
     python evaluate.py --model transformer --target_var NITRATE \
         --checkpoint results/NITRATE/transformer/best.pt
 
+    python evaluate.py --model transformer_scalar --target_var NITRATE \
+        --checkpoint results/NITRATE/transformer_scalar/best.pt
+
     python evaluate.py --model ppcon --target_var NITRATE \
         --checkpoint_dir results_ppcon/NITRATE/2024-01-01/model --epoch 200
 """
@@ -20,7 +23,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from dataset import FloatDataset
-from models import RawTransformerProbe, RawCNNProbe
+from models import RawTransformerProbe, RawTransformerScalarProbe, RawCNNProbe
 from ppcon_eval import load_ppcon_checkpoint, ppcon_forward
 from train import DEPTH_GRIDS, make_model
 
@@ -61,17 +64,22 @@ def assign_season(day):
     return None
 
 
-def per_profile_rmse(model, dataset, depth_levels, target_var, device, is_ppcon=False):
+def per_profile_rmse(model, dataset, depth_levels, target_var, device, is_ppcon=False,
+                      use_scalars=False):
     """Runs every profile through the model one at a time (matches PPCon's
     own get_reconstruction, which also iterates with shuffle and no batching),
     returns per-profile RMSE plus the lat/lon/season needed for bucketing.
     For the PPCon baseline (is_ppcon=True), `model` is the five-model tuple
     from load_ppcon_checkpoint and the forward pass goes through ppcon_forward
-    instead of the RawCNNProbe/RawTransformerProbe call."""
+    instead of the RawCNNProbe/RawTransformerProbe/RawTransformerScalarProbe
+    call. use_scalars=True (transformer_scalar) broadcasts lat/lon/day_rad/
+    year to constant-valued depth channels before the model call, same as
+    train.py's run_epoch."""
     loader = DataLoader(dataset, batch_size=1, shuffle=False)
     if not is_ppcon:
         model.eval()
 
+    n_depth = depth_levels.shape[0]
     records = []
     with torch.no_grad():
         for year, day_rad, lat, lon, temp, psal, doxy, target in loader:
@@ -82,6 +90,11 @@ def per_profile_rmse(model, dataset, depth_levels, target_var, device, is_ppcon=
                 pred = ppcon_forward(model, year, day_rad, lat, lon, temp, psal, doxy).squeeze()
             else:
                 profile = torch.stack([temp, psal, doxy], dim=-1).to(device)
+                if use_scalars:
+                    b = profile.shape[0]
+                    scalars = torch.stack([lat, lon, day_rad, year], dim=-1).to(device)
+                    scalars = scalars.view(b, 1, 4).expand(b, n_depth, 4)
+                    profile = torch.cat([profile, scalars], dim=-1)
                 pred = model(profile, depth_levels).squeeze()      # (200,)
             true = target.squeeze().to(device)                  # (200,)
 
@@ -133,7 +146,8 @@ def summarize(records):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--model", choices=["transformer", "cnn", "ppcon"], required=True)
+    p.add_argument("--model", choices=["transformer", "transformer_scalar", "cnn", "ppcon"],
+                   required=True)
     p.add_argument("--target_var", choices=["NITRATE", "CHLA", "BBP700"], required=True)
     p.add_argument("--checkpoint", help="required for --model transformer/cnn")
     p.add_argument("--checkpoint_dir", help="required for --model ppcon: the .../model/ "
@@ -162,7 +176,9 @@ def main():
     else:
         model = make_model(args.model).to(device)
         model.load_state_dict(torch.load(args.checkpoint, map_location=device))
-        records = per_profile_rmse(model, test_ds, depth_levels, args.target_var, device)
+        use_scalars = args.model == "transformer_scalar"
+        records = per_profile_rmse(model, test_ds, depth_levels, args.target_var, device,
+                                    use_scalars=use_scalars)
 
     summarize(records)
 
