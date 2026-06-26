@@ -137,6 +137,21 @@ class RawCNNProbe(nn.Module):
         x = self.bn16(self.af16(self.conv16(x))); x = self.do16(x)
         x = self.conv17(x)
         return x.transpose(1, 2)  # back to (B, D, 1)
+
+
+class RawCNNScalarProbe(RawCNNProbe):
+    """Same as RawCNNProbe, but takes 7 channels instead of 3: T/S/O plus
+    lat/lon/day_rad/year, each broadcast to a constant-valued channel across
+    all 200 depth points before the conv stack sees them (no learned scalar
+    encoding, unlike PPCon's four 3-layer MLPs). CNN-backbone counterpart to
+    RawTransformerScalarProbe. Broadcasting is done by the caller (train.py /
+    evaluate.py), not here, so this class is just RawCNNProbe with
+    in_channels=7 and no other changes."""
+
+    def __init__(self, in_channels=7, dp_rate=0.2):
+        super().__init__(in_channels=in_channels, dp_rate=dp_rate)
+
+
 def count_params(model):
     return sum(p.numel() for p in model.parameters())
 
@@ -145,7 +160,9 @@ if __name__ == "__main__":
     t = RawTransformerProbe()
     ts = RawTransformerScalarProbe()
     c = RawCNNProbe()
+    cs = RawCNNScalarProbe()
     print(f"RawTransformerProbe:       {count_params(t):,} params")
     print(f"RawTransformerScalarProbe: {count_params(ts):,} params")
     print(f"RawCNNProbe:               {count_params(c):,} params")
+    print(f"RawCNNScalarProbe:         {count_params(cs):,} params")
     print(f"PPCon total:               412,049 params  (158,800 in 4 scalar MLPs, 253,249 in conv stack)")

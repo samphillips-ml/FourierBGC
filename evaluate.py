@@ -13,6 +13,9 @@ is the form Appendix B's Table B1 number (0.52 for nitrate) is in.
     python evaluate.py --model transformer_scalar --target_var NITRATE \
         --checkpoint results/NITRATE/transformer_scalar/best.pt
 
+    python evaluate.py --model cnn_scalar --target_var NITRATE \
+        --checkpoint results/NITRATE/cnn_scalar/best.pt
+
     python evaluate.py --model ppcon --target_var NITRATE \
         --checkpoint_dir results_ppcon/NITRATE/2024-01-01/model --epoch 200
 """
@@ -23,8 +26,10 @@ import torch
 from torch.utils.data import DataLoader
 
 from dataset import FloatDataset
-from models import RawTransformerProbe, RawTransformerScalarProbe, RawCNNProbe
+from models import (RawTransformerProbe, RawTransformerScalarProbe, RawCNNProbe,
+                     RawCNNScalarProbe)
 from ppcon_eval import load_ppcon_checkpoint, ppcon_forward
+from scalar_norm import normalize_scalars
 from train import DEPTH_GRIDS, make_model
 
 # from utils_analysis.py, dict_ga: [[lat_min, lat_max], [lon_min, lon_max]]
@@ -71,10 +76,10 @@ def per_profile_rmse(model, dataset, depth_levels, target_var, device, is_ppcon=
     returns per-profile RMSE plus the lat/lon/season needed for bucketing.
     For the PPCon baseline (is_ppcon=True), `model` is the five-model tuple
     from load_ppcon_checkpoint and the forward pass goes through ppcon_forward
-    instead of the RawCNNProbe/RawTransformerProbe/RawTransformerScalarProbe
-    call. use_scalars=True (transformer_scalar) broadcasts lat/lon/day_rad/
-    year to constant-valued depth channels before the model call, same as
-    train.py's run_epoch."""
+    instead of the RawCNNProbe/RawCNNScalarProbe/RawTransformerProbe/
+    RawTransformerScalarProbe call. use_scalars=True (transformer_scalar/
+    cnn_scalar) broadcasts lat/lon/day_rad/year to constant-valued depth
+    channels before the model call, same as train.py's run_epoch."""
     loader = DataLoader(dataset, batch_size=1, shuffle=False)
     if not is_ppcon:
         model.eval()
@@ -92,7 +97,8 @@ def per_profile_rmse(model, dataset, depth_levels, target_var, device, is_ppcon=
                 profile = torch.stack([temp, psal, doxy], dim=-1).to(device)
                 if use_scalars:
                     b = profile.shape[0]
-                    scalars = torch.stack([lat, lon, day_rad, year], dim=-1).to(device)
+                    n_lat, n_lon, n_day_rad, n_year = normalize_scalars(lat, lon, day_rad, year)
+                    scalars = torch.stack([n_lat, n_lon, n_day_rad, n_year], dim=-1).to(device)
                     scalars = scalars.view(b, 1, 4).expand(b, n_depth, 4)
                     profile = torch.cat([profile, scalars], dim=-1)
                 pred = model(profile, depth_levels).squeeze()      # (200,)
@@ -146,7 +152,8 @@ def summarize(records):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--model", choices=["transformer", "transformer_scalar", "cnn", "ppcon"],
+    p.add_argument("--model",
+                   choices=["transformer", "transformer_scalar", "cnn", "cnn_scalar", "ppcon"],
                    required=True)
     p.add_argument("--target_var", choices=["NITRATE", "CHLA", "BBP700"], required=True)
     p.add_argument("--checkpoint", help="required for --model transformer/cnn")
@@ -162,7 +169,7 @@ def main():
         if not args.checkpoint_dir or args.epoch is None:
             p.error("--model ppcon requires --checkpoint_dir and --epoch")
     elif not args.checkpoint:
-        p.error("--model transformer/cnn requires --checkpoint")
+        p.error("--model transformer/transformer_scalar/cnn/cnn_scalar requires --checkpoint")
 
     device = "cuda" if torch.cuda.is_available() else (
         "mps" if torch.backends.mps.is_available() else "cpu")
@@ -176,7 +183,7 @@ def main():
     else:
         model = make_model(args.model).to(device)
         model.load_state_dict(torch.load(args.checkpoint, map_location=device))
-        use_scalars = args.model == "transformer_scalar"
+        use_scalars = args.model in ("transformer_scalar", "cnn_scalar")
         records = per_profile_rmse(model, test_ds, depth_levels, args.target_var, device,
                                     use_scalars=use_scalars)
 
