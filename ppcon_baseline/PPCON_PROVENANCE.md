@@ -8,3 +8,6 @@ This is an unmodified snapshot, used to train PPCon baseline checkpoints
 for direct comparison against the raw CNN/Transformer models in this repo.
 Training was rerun on the same train/test split, evaluated through this
 repo's own evaluate.py for direct comparability.
+
+Patch applied: replaced np.Inf with np.inf in ppcon/utils/pytorchtools.py 
+to fix NumPy 2.0 compatibility. One-character change, no effect on behavior.
