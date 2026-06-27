@@ -21,6 +21,9 @@ is the form Appendix B's Table B1 number (0.52 for nitrate) is in.
 
     python evaluate.py --model ppcon --target_var NITRATE \
         --checkpoint_dir results_ppcon/NITRATE/2024-01-01/model --epoch 200
+
+    python evaluate.py --model ppcon_no_scalar --target_var NITRATE \
+        --checkpoint_dir ~/ppcon_results_no_scalar/NITRATE/model --epoch 200
 """
 import argparse
 
@@ -33,6 +36,7 @@ from fourier_features import compute_fourier_features
 from models import (RawTransformerProbe, RawTransformerScalarProbe, RawCNNProbe,
                      RawCNNScalarProbe, FourierBGC)
 from ppcon_eval import load_ppcon_checkpoint, ppcon_forward
+from ppcon_no_scalar_eval import load_ppcon_no_scalar_checkpoint, ppcon_no_scalar_forward
 from scalar_norm import normalize_scalars
 from train import DEPTH_GRIDS, make_model
 
@@ -74,22 +78,26 @@ def assign_season(day):
 
 
 def per_profile_rmse(model, dataset, depth_levels, target_var, device, is_ppcon=False,
-                      use_scalars=False, use_fourier=False):
+                      is_ppcon_no_scalar=False, use_scalars=False, use_fourier=False):
     """Runs every profile through the model one at a time (matches PPCon's
     own get_reconstruction, which also iterates with shuffle and no batching),
     returns per-profile RMSE plus the lat/lon/season needed for bucketing.
     For the PPCon baseline (is_ppcon=True), `model` is the five-model tuple
     from load_ppcon_checkpoint and the forward pass goes through ppcon_forward
     instead of the RawCNNProbe/RawCNNScalarProbe/RawTransformerProbe/
-    RawTransformerScalarProbe/FourierBGC call. use_scalars=True
-    (transformer_scalar/cnn_scalar) broadcasts (z-scored) lat/lon/day_rad/
-    year to constant-valued depth channels and passes them to the model as a
-    separate `scalars` argument, concatenated after the backbone, not at the
-    input, same as train.py's run_epoch. use_fourier=True (fourierbgc)
-    instead concatenates a bounded Fourier encoding of lat/lon/day_of_year
-    onto T/S/O at the input (see fourier_features.py); year is not used."""
+    RawTransformerScalarProbe/FourierBGC call. is_ppcon_no_scalar=True is the
+    ablation: `model` is the single Conv1dMed from
+    load_ppcon_no_scalar_checkpoint and the forward pass goes through
+    ppcon_no_scalar_forward, which takes only temp/psal/doxy -- no scalar
+    inputs at all. use_scalars=True (transformer_scalar/cnn_scalar) broadcasts
+    (z-scored) lat/lon/day_rad/year to constant-valued depth channels and
+    passes them to the model as a separate `scalars` argument, concatenated
+    after the backbone, not at the input, same as train.py's run_epoch.
+    use_fourier=True (fourierbgc) instead concatenates a bounded Fourier
+    encoding of lat/lon/day_of_year onto T/S/O at the input (see
+    fourier_features.py); year is not used."""
     loader = DataLoader(dataset, batch_size=1, shuffle=False)
-    if not is_ppcon:
+    if not is_ppcon and not is_ppcon_no_scalar:
         model.eval()
 
     n_depth = depth_levels.shape[0]
@@ -101,6 +109,9 @@ def per_profile_rmse(model, dataset, depth_levels, target_var, device, is_ppcon=
                 lat, lon = lat.to(device), lon.to(device)
                 temp, psal, doxy = temp.to(device), psal.to(device), doxy.to(device)
                 pred = ppcon_forward(model, year, day_rad, lat, lon, temp, psal, doxy).squeeze()
+            elif is_ppcon_no_scalar:
+                temp, psal, doxy = temp.to(device), psal.to(device), doxy.to(device)
+                pred = ppcon_no_scalar_forward(model, temp, psal, doxy).squeeze()
             else:
                 profile = torch.stack([temp, psal, doxy], dim=-1).to(device)
                 scalars = None
@@ -168,21 +179,23 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--model",
                    choices=["transformer", "transformer_scalar", "cnn", "cnn_scalar",
-                            "fourierbgc", "ppcon"],
+                            "fourierbgc", "ppcon", "ppcon_no_scalar"],
                    required=True)
     p.add_argument("--target_var", choices=["NITRATE", "CHLA", "BBP700"], required=True)
     p.add_argument("--checkpoint", help="required for --model transformer/cnn")
-    p.add_argument("--checkpoint_dir", help="required for --model ppcon: the .../model/ "
-                   "directory holding model_{day,year,lat,lon,conv}_{epoch}.pt")
-    p.add_argument("--epoch", type=int, help="required for --model ppcon")
+    p.add_argument("--checkpoint_dir", help="required for --model ppcon/ppcon_no_scalar: the "
+                   ".../model/ directory holding model_{day,year,lat,lon,conv}_{epoch}.pt "
+                   "(ppcon) or model_conv_{epoch}.pt (ppcon_no_scalar)")
+    p.add_argument("--epoch", type=int, help="required for --model ppcon/ppcon_no_scalar")
     p.add_argument("--dp_rate", type=float, default=0.2,
-                   help="ppcon Conv1dMed dropout rate; inactive in eval mode, value has no effect")
+                   help="ppcon/ppcon_no_scalar Conv1dMed dropout rate; inactive in eval mode, "
+                   "value has no effect")
     p.add_argument("--data_dir", default="data")
     args = p.parse_args()
 
-    if args.model == "ppcon":
+    if args.model in ("ppcon", "ppcon_no_scalar"):
         if not args.checkpoint_dir or args.epoch is None:
-            p.error("--model ppcon requires --checkpoint_dir and --epoch")
+            p.error(f"--model {args.model} requires --checkpoint_dir and --epoch")
     elif not args.checkpoint:
         p.error("--model transformer/transformer_scalar/cnn/cnn_scalar/fourierbgc "
                 "requires --checkpoint")
@@ -196,6 +209,10 @@ def main():
     if args.model == "ppcon":
         model = load_ppcon_checkpoint(args.checkpoint_dir, args.epoch, device, dp_rate=args.dp_rate)
         records = per_profile_rmse(model, test_ds, depth_levels, args.target_var, device, is_ppcon=True)
+    elif args.model == "ppcon_no_scalar":
+        model = load_ppcon_no_scalar_checkpoint(args.checkpoint_dir, args.epoch, device, dp_rate=args.dp_rate)
+        records = per_profile_rmse(model, test_ds, depth_levels, args.target_var, device,
+                                    is_ppcon_no_scalar=True)
     else:
         model = make_model(args.model).to(device)
         model.load_state_dict(torch.load(args.checkpoint, map_location=device))
