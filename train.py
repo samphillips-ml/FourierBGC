@@ -1,15 +1,18 @@
 """
-Trains RawTransformerProbe, RawTransformerScalarProbe, RawCNNProbe, or
-RawCNNScalarProbe on PPCon's own dataset. transformer/cnn use T/S/O only, no
-lat/lon/day/year. transformer_scalar/cnn_scalar add those four scalars back
-in, broadcast here as constant-valued depth channels, z-scored, then
-concatenated by the model after its backbone (see models.py) rather than at
-the input. PPCon's published RMSE is the comparison target, not something
-retrained here.
+Trains RawTransformerProbe, RawTransformerScalarProbe, RawCNNProbe,
+RawCNNScalarProbe, or ArgoFormer on PPCon's own dataset. transformer/cnn use
+T/S/O only, no lat/lon/day/year. transformer_scalar/cnn_scalar add those four
+scalars back in, broadcast here as constant-valued depth channels, z-scored,
+then concatenated by the model after its backbone (see models.py) rather
+than at the input. argoformer instead fuses a bounded Fourier feature
+encoding of lat/lon/day_of_year (see fourier_features.py) at the input,
+year dropped entirely. PPCon's published RMSE is the comparison target, not
+something retrained here.
 
     python train.py --model transformer --target_var NITRATE
     python train.py --model transformer_scalar --target_var NITRATE
     python train.py --model cnn --target_var CHLA --epochs 100
+    python train.py --model argoformer --target_var NITRATE
 """
 import argparse
 import os
@@ -21,8 +24,9 @@ from torch.nn.functional import mse_loss
 from torch.utils.data import DataLoader
 
 from dataset import FloatDataset
+from fourier_features import compute_fourier_features
 from models import (RawTransformerProbe, RawTransformerScalarProbe, RawCNNProbe,
-                     RawCNNScalarProbe)
+                     RawCNNScalarProbe, ArgoFormer)
 from scalar_norm import normalize_scalars
 
 # PPCon's own depth grids (dict.py): nitrate 0-1000m @ 5m, chla/bbp700 0-200m @ 1m.
@@ -45,11 +49,13 @@ def make_model(name):
         return RawCNNProbe()
     elif name == "cnn_scalar":
         return RawCNNScalarProbe()
+    elif name == "argoformer":
+        return ArgoFormer()
     raise ValueError(f"unknown model {name}")
 
 
 def run_epoch(model, loader, depth_levels, device, optimizer=None, max_grad_norm=1.0,
-              use_scalars=False):
+              use_scalars=False, use_fourier=False):
     train_mode = optimizer is not None
     model.train() if train_mode else model.eval()
 
@@ -70,6 +76,15 @@ def run_epoch(model, loader, depth_levels, device, optimizer=None, max_grad_norm
                 lat, lon, day_rad, year = normalize_scalars(lat, lon, day_rad, year)
                 scalars = torch.stack([lat, lon, day_rad, year], dim=-1).to(device)  # (B, 4)
                 scalars = scalars.view(b, 1, 4).expand(b, n_depth, 4)  # (B, D, 4)
+            elif use_fourier:
+                # bounded Fourier encoding of lat/lon/day_of_year, fused at
+                # the input alongside T/S/O (see fourier_features.py and
+                # ArgoFormer in models.py). year is not used.
+                b = profile.shape[0]
+                day_rad, lat, lon = day_rad.to(device), lat.to(device), lon.to(device)
+                fourier = compute_fourier_features(day_rad, lat, lon)  # (B, 18)
+                fourier = fourier.view(b, 18, 1).expand(b, 18, n_depth).transpose(1, 2)  # (B, D, 18)
+                profile = torch.cat([profile, fourier], dim=-1)  # (B, D, 21)
 
             output = model(profile, depth_levels, scalars)
             loss = mse_loss(output, target)
@@ -101,7 +116,8 @@ def make_scheduler(optimizer, total_epochs, warmup_epochs=5):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--model", choices=["transformer", "transformer_scalar", "cnn", "cnn_scalar"],
+    p.add_argument("--model",
+                   choices=["transformer", "transformer_scalar", "cnn", "cnn_scalar", "argoformer"],
                    required=True)
     p.add_argument("--target_var", choices=["NITRATE", "CHLA", "BBP700"], required=True)
     p.add_argument("--epochs", type=int, default=100)
@@ -125,6 +141,7 @@ def main():
 
     model = make_model(args.model).to(device)
     use_scalars = args.model in ("transformer_scalar", "cnn_scalar")
+    use_fourier = args.model == "argoformer"
     depth_levels = DEPTH_GRIDS[args.target_var].to(device)
     optimizer = Adam(model.parameters(), lr=args.lr)
     scheduler = make_scheduler(optimizer, args.epochs)
@@ -137,9 +154,9 @@ def main():
     with open(log_path, "w") as log:
         for ep in range(args.epochs):
             train_mse = run_epoch(model, train_loader, depth_levels, device, optimizer,
-                                   use_scalars=use_scalars)
+                                   use_scalars=use_scalars, use_fourier=use_fourier)
             test_mse = run_epoch(model, test_loader, depth_levels, device, optimizer=None,
-                                  use_scalars=use_scalars)
+                                  use_scalars=use_scalars, use_fourier=use_fourier)
             scheduler.step()
 
             line = (f"epoch {ep+1:4d}  train_mse {train_mse:.5f}  test_mse {test_mse:.5f}"

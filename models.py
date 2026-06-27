@@ -189,6 +189,20 @@ class RawCNNScalarProbe(RawCNNProbe):
         return x.transpose(1, 2)  # back to (B, D, 1)
 
 
+class ArgoFormer(RawCNNProbe):
+    """RawCNNProbe with in_channels=21: 3 T/S/O channels plus 18 Fourier
+    feature channels (lat/lon/day_of_year, see fourier_features.py), fused
+    at the input rather than just before the output like RawCNNScalarProbe.
+    Early fusion is safe here because Fourier features are bounded to
+    [-1, 1] by construction, unlike the raw-scale scalars that caused the
+    instability documented in RawCNNScalarProbe's docstring. Broadcasting
+    the 18 features to the depth dimension and concatenating with T/S/O is
+    done by the caller (train.py / evaluate.py)."""
+
+    def __init__(self, in_channels=21, dp_rate=0.2):
+        super().__init__(in_channels=in_channels, dp_rate=dp_rate)
+
+
 def count_params(model):
     return sum(p.numel() for p in model.parameters())
 
@@ -198,8 +212,10 @@ if __name__ == "__main__":
     ts = RawTransformerScalarProbe()
     c = RawCNNProbe()
     cs = RawCNNScalarProbe()
+    af = ArgoFormer()
     print(f"RawTransformerProbe:       {count_params(t):,} params")
     print(f"RawTransformerScalarProbe: {count_params(ts):,} params")
     print(f"RawCNNProbe:               {count_params(c):,} params")
     print(f"RawCNNScalarProbe:         {count_params(cs):,} params")
+    print(f"ArgoFormer:                {count_params(af):,} params")
     print(f"PPCon total:               412,049 params  (158,800 in 4 scalar MLPs, 253,249 in conv stack)")

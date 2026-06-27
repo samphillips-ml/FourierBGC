@@ -16,6 +16,9 @@ is the form Appendix B's Table B1 number (0.52 for nitrate) is in.
     python evaluate.py --model cnn_scalar --target_var NITRATE \
         --checkpoint results/NITRATE/cnn_scalar/best.pt
 
+    python evaluate.py --model argoformer --target_var NITRATE \
+        --checkpoint results/NITRATE/argoformer/best.pt
+
     python evaluate.py --model ppcon --target_var NITRATE \
         --checkpoint_dir results_ppcon/NITRATE/2024-01-01/model --epoch 200
 """
@@ -26,8 +29,9 @@ import torch
 from torch.utils.data import DataLoader
 
 from dataset import FloatDataset
+from fourier_features import compute_fourier_features
 from models import (RawTransformerProbe, RawTransformerScalarProbe, RawCNNProbe,
-                     RawCNNScalarProbe)
+                     RawCNNScalarProbe, ArgoFormer)
 from ppcon_eval import load_ppcon_checkpoint, ppcon_forward
 from scalar_norm import normalize_scalars
 from train import DEPTH_GRIDS, make_model
@@ -70,18 +74,20 @@ def assign_season(day):
 
 
 def per_profile_rmse(model, dataset, depth_levels, target_var, device, is_ppcon=False,
-                      use_scalars=False):
+                      use_scalars=False, use_fourier=False):
     """Runs every profile through the model one at a time (matches PPCon's
     own get_reconstruction, which also iterates with shuffle and no batching),
     returns per-profile RMSE plus the lat/lon/season needed for bucketing.
     For the PPCon baseline (is_ppcon=True), `model` is the five-model tuple
     from load_ppcon_checkpoint and the forward pass goes through ppcon_forward
     instead of the RawCNNProbe/RawCNNScalarProbe/RawTransformerProbe/
-    RawTransformerScalarProbe call. use_scalars=True (transformer_scalar/
-    cnn_scalar) broadcasts (z-scored) lat/lon/day_rad/year to constant-valued
-    depth channels and passes them to the model as a separate `scalars`
-    argument, concatenated after the backbone, not at the input, same as
-    train.py's run_epoch."""
+    RawTransformerScalarProbe/ArgoFormer call. use_scalars=True
+    (transformer_scalar/cnn_scalar) broadcasts (z-scored) lat/lon/day_rad/
+    year to constant-valued depth channels and passes them to the model as a
+    separate `scalars` argument, concatenated after the backbone, not at the
+    input, same as train.py's run_epoch. use_fourier=True (argoformer)
+    instead concatenates a bounded Fourier encoding of lat/lon/day_of_year
+    onto T/S/O at the input (see fourier_features.py); year is not used."""
     loader = DataLoader(dataset, batch_size=1, shuffle=False)
     if not is_ppcon:
         model.eval()
@@ -103,6 +109,12 @@ def per_profile_rmse(model, dataset, depth_levels, target_var, device, is_ppcon=
                     n_lat, n_lon, n_day_rad, n_year = normalize_scalars(lat, lon, day_rad, year)
                     scalars = torch.stack([n_lat, n_lon, n_day_rad, n_year], dim=-1).to(device)
                     scalars = scalars.view(b, 1, 4).expand(b, n_depth, 4)
+                elif use_fourier:
+                    b = profile.shape[0]
+                    day_rad_d, lat_d, lon_d = day_rad.to(device), lat.to(device), lon.to(device)
+                    fourier = compute_fourier_features(day_rad_d, lat_d, lon_d)  # (B, 18)
+                    fourier = fourier.view(b, 18, 1).expand(b, 18, n_depth).transpose(1, 2)
+                    profile = torch.cat([profile, fourier], dim=-1)  # (B, D, 21)
                 pred = model(profile, depth_levels, scalars).squeeze()  # (200,)
             true = target.squeeze().to(device)                  # (200,)
 
@@ -155,7 +167,8 @@ def summarize(records):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--model",
-                   choices=["transformer", "transformer_scalar", "cnn", "cnn_scalar", "ppcon"],
+                   choices=["transformer", "transformer_scalar", "cnn", "cnn_scalar",
+                            "argoformer", "ppcon"],
                    required=True)
     p.add_argument("--target_var", choices=["NITRATE", "CHLA", "BBP700"], required=True)
     p.add_argument("--checkpoint", help="required for --model transformer/cnn")
@@ -171,7 +184,8 @@ def main():
         if not args.checkpoint_dir or args.epoch is None:
             p.error("--model ppcon requires --checkpoint_dir and --epoch")
     elif not args.checkpoint:
-        p.error("--model transformer/transformer_scalar/cnn/cnn_scalar requires --checkpoint")
+        p.error("--model transformer/transformer_scalar/cnn/cnn_scalar/argoformer "
+                "requires --checkpoint")
 
     device = "cuda" if torch.cuda.is_available() else (
         "mps" if torch.backends.mps.is_available() else "cpu")
@@ -186,8 +200,9 @@ def main():
         model = make_model(args.model).to(device)
         model.load_state_dict(torch.load(args.checkpoint, map_location=device))
         use_scalars = args.model in ("transformer_scalar", "cnn_scalar")
+        use_fourier = args.model == "argoformer"
         records = per_profile_rmse(model, test_ds, depth_levels, args.target_var, device,
-                                    use_scalars=use_scalars)
+                                    use_scalars=use_scalars, use_fourier=use_fourier)
 
     summarize(records)
 
