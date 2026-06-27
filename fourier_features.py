@@ -1,10 +1,10 @@
 """
-Fourier feature encoding of lat, lon, day_of_year for ArgoFormer. Pure
+Fourier feature encoding of lat, lon, day_of_year for FourierBGC. Pure
 sin/cos basis, no learned parameters, no numpy — every value lands in
 [-1, 1] by construction, which is why these can be concatenated directly
 at the input (unlike the raw-scale broadcast scalars used by cnn_scalar,
 which forced an instability fix; see models.py). Year is not encoded here
-or anywhere in the ArgoFormer pathway: water mass (T/S/O) is the dominant
+or anywhere in the FourierBGC pathway: water mass (T/S/O) is the dominant
 signal for these targets and inter-annual drift adds nothing principled.
 
 3 harmonics (1x, 2x, 4x) per input, sin+cos each -> 6 values per input,

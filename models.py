@@ -189,7 +189,7 @@ class RawCNNScalarProbe(RawCNNProbe):
         return x.transpose(1, 2)  # back to (B, D, 1)
 
 
-class ArgoFormer(RawCNNProbe):
+class FourierBGC(RawCNNProbe):
     """RawCNNProbe with in_channels=21: 3 T/S/O channels plus 18 Fourier
     feature channels (lat/lon/day_of_year, see fourier_features.py), fused
     at the input rather than just before the output like RawCNNScalarProbe.
@@ -212,10 +212,10 @@ if __name__ == "__main__":
     ts = RawTransformerScalarProbe()
     c = RawCNNProbe()
     cs = RawCNNScalarProbe()
-    af = ArgoFormer()
+    af = FourierBGC()
     print(f"RawTransformerProbe:       {count_params(t):,} params")
     print(f"RawTransformerScalarProbe: {count_params(ts):,} params")
     print(f"RawCNNProbe:               {count_params(c):,} params")
     print(f"RawCNNScalarProbe:         {count_params(cs):,} params")
-    print(f"ArgoFormer:                {count_params(af):,} params")
+    print(f"FourierBGC:                {count_params(af):,} params")
     print(f"PPCon total:               412,049 params  (158,800 in 4 scalar MLPs, 253,249 in conv stack)")

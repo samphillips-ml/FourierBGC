@@ -1,10 +1,10 @@
 """
 Trains RawTransformerProbe, RawTransformerScalarProbe, RawCNNProbe,
-RawCNNScalarProbe, or ArgoFormer on PPCon's own dataset. transformer/cnn use
+RawCNNScalarProbe, or FourierBGC on PPCon's own dataset. transformer/cnn use
 T/S/O only, no lat/lon/day/year. transformer_scalar/cnn_scalar add those four
 scalars back in, broadcast here as constant-valued depth channels, z-scored,
 then concatenated by the model after its backbone (see models.py) rather
-than at the input. argoformer instead fuses a bounded Fourier feature
+than at the input. fourierbgc instead fuses a bounded Fourier feature
 encoding of lat/lon/day_of_year (see fourier_features.py) at the input,
 year dropped entirely. PPCon's published RMSE is the comparison target, not
 something retrained here.
@@ -12,7 +12,7 @@ something retrained here.
     python train.py --model transformer --target_var NITRATE
     python train.py --model transformer_scalar --target_var NITRATE
     python train.py --model cnn --target_var CHLA --epochs 100
-    python train.py --model argoformer --target_var NITRATE
+    python train.py --model fourierbgc --target_var NITRATE
 """
 import argparse
 import os
@@ -26,7 +26,7 @@ from torch.utils.data import DataLoader
 from dataset import FloatDataset
 from fourier_features import compute_fourier_features
 from models import (RawTransformerProbe, RawTransformerScalarProbe, RawCNNProbe,
-                     RawCNNScalarProbe, ArgoFormer)
+                     RawCNNScalarProbe, FourierBGC)
 from scalar_norm import normalize_scalars
 
 # PPCon's own depth grids (dict.py): nitrate 0-1000m @ 5m, chla/bbp700 0-200m @ 1m.
@@ -49,8 +49,8 @@ def make_model(name):
         return RawCNNProbe()
     elif name == "cnn_scalar":
         return RawCNNScalarProbe()
-    elif name == "argoformer":
-        return ArgoFormer()
+    elif name == "fourierbgc":
+        return FourierBGC()
     raise ValueError(f"unknown model {name}")
 
 
@@ -79,7 +79,7 @@ def run_epoch(model, loader, depth_levels, device, optimizer=None, max_grad_norm
             elif use_fourier:
                 # bounded Fourier encoding of lat/lon/day_of_year, fused at
                 # the input alongside T/S/O (see fourier_features.py and
-                # ArgoFormer in models.py). year is not used.
+                # FourierBGC in models.py). year is not used.
                 b = profile.shape[0]
                 day_rad, lat, lon = day_rad.to(device), lat.to(device), lon.to(device)
                 fourier = compute_fourier_features(day_rad, lat, lon)  # (B, 18)
@@ -117,7 +117,7 @@ def make_scheduler(optimizer, total_epochs, warmup_epochs=5):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--model",
-                   choices=["transformer", "transformer_scalar", "cnn", "cnn_scalar", "argoformer"],
+                   choices=["transformer", "transformer_scalar", "cnn", "cnn_scalar", "fourierbgc"],
                    required=True)
     p.add_argument("--target_var", choices=["NITRATE", "CHLA", "BBP700"], required=True)
     p.add_argument("--epochs", type=int, default=100)
@@ -141,7 +141,7 @@ def main():
 
     model = make_model(args.model).to(device)
     use_scalars = args.model in ("transformer_scalar", "cnn_scalar")
-    use_fourier = args.model == "argoformer"
+    use_fourier = args.model == "fourierbgc"
     depth_levels = DEPTH_GRIDS[args.target_var].to(device)
     optimizer = Adam(model.parameters(), lr=args.lr)
     scheduler = make_scheduler(optimizer, args.epochs)
