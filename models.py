@@ -1,10 +1,16 @@
 """
 Raw probes for the PPCon comparison. RawTransformerProbe and RawCNNProbe take
-T/S/O only, no lat/lon/day/year. RawTransformerScalarProbe adds those four
-scalars back in as constant-valued depth channels (no learned encoding), to
-test whether PPCon's MLP encoding cost or the information itself is what
-hurts on nitrate. All three return per-depth predictions, shape (B, D, 1), so
-train.py can swap models without touching the loss/eval code.
+T/S/O only, no lat/lon/day/year. The *Scalar variants add those four scalars
+back in, but not at the input: T/S/O run through the full backbone alone,
+then the (z-scored) scalars are concatenated as extra constant-valued depth
+channels right before the final projection to a scalar prediction (CNN:
+before conv17; transformer: before the head). Concatenating raw-scale lat/
+lon/day_rad/year at the input forced every conv/attention layer to look at
+features on wildly different scales from layer one, which is what made
+training unstable; pushing the injection point to just before the output
+keeps T/S/O's representation learning insulated from that. All four return
+per-depth predictions, shape (B, D, 1), so train.py can swap models without
+touching the loss/eval code.
 """
 import math
 
@@ -41,8 +47,10 @@ class RawTransformerProbe(nn.Module):
         pe[:, 1::2] = torch.cos(depth_norm.unsqueeze(1) * div)
         return pe
 
-    def forward(self, profile, depth_levels):
-        # profile: (B, D, 3), depth_levels: (D,) physical depth in meters
+    def forward(self, profile, depth_levels, scalars=None):
+        # profile: (B, D, 3), depth_levels: (D,) physical depth in meters.
+        # scalars unused here, kept in the signature so train.py/evaluate.py
+        # can call RawTransformerProbe and RawTransformerScalarProbe identically.
         x = self.input_proj(profile)
         x = x + self._sinusoidal_pe(depth_levels, profile.device).unsqueeze(0)
         x = self.transformer(x)
@@ -50,18 +58,28 @@ class RawTransformerProbe(nn.Module):
 
 
 class RawTransformerScalarProbe(RawTransformerProbe):
-    """Same as RawTransformerProbe, but takes 7 channels instead of 3: T/S/O
-    plus lat/lon/day_rad/year, each broadcast to a constant-valued channel
-    across all 200 depth points before the transformer sees them (no learned
+    """Same backbone as RawTransformerProbe (n_in=3, T/S/O only), but after
+    the transformer encoder, lat/lon/day_rad/year are concatenated as 4 extra
+    constant-valued channels onto each depth position's d_model embedding,
+    and a wider head (d_model+4 -> 1) makes the final prediction (no learned
     scalar encoding, unlike PPCon's four 3-layer MLPs). Ablation target: does
     PPCon's geolocation/date *information* hurt on nitrate, or just its
-    expensive MLP encoding? Broadcasting is done by the caller (train.py /
-    evaluate.py), not here, so this class is just RawTransformerProbe with
-    n_in=7 and no other changes."""
+    expensive MLP encoding? Broadcasting the scalars to (B, D, 4) is done by
+    the caller (train.py / evaluate.py); this class concatenates and
+    replaces the head."""
 
-    def __init__(self, n_in=7, d_model=64, nhead=4, num_layers=2, dropout=0.1):
+    def __init__(self, n_in=3, n_scalars=4, d_model=64, nhead=4, num_layers=2, dropout=0.1):
         super().__init__(n_in=n_in, d_model=d_model, nhead=nhead,
                           num_layers=num_layers, dropout=dropout)
+        self.head = nn.Linear(d_model + n_scalars, 1)
+
+    def forward(self, profile, depth_levels, scalars):
+        # profile: (B, D, 3), scalars: (B, D, 4) already broadcast/z-scored by caller
+        x = self.input_proj(profile)
+        x = x + self._sinusoidal_pe(depth_levels, profile.device).unsqueeze(0)
+        x = self.transformer(x)
+        x = torch.cat([x, scalars], dim=-1)  # (B, D, d_model + 4)
+        return self.head(x)  # (B, D, 1)
 
 
 class RawCNNProbe(nn.Module):
@@ -123,9 +141,10 @@ class RawCNNProbe(nn.Module):
 
         self.conv17 = nn.Conv1d(32, 1, kernel_size=3, stride=1, padding=1)
 
-    def forward(self, profile, depth_levels=None):
-        # profile: (B, D, 3) -> conv1d wants (B, C, D). depth_levels unused,
-        # kept in the signature so train.py can call both probes identically.
+    def forward(self, profile, depth_levels=None, scalars=None):
+        # profile: (B, D, 3) -> conv1d wants (B, C, D). depth_levels/scalars
+        # unused, kept in the signature so train.py can call both probes
+        # identically.
         x = profile.transpose(1, 2)
         x = self.bn1(self.af1(self.conv1(x))); x = self.do1(x)
         x = self.bn2(self.af2(self.conv2(x))); x = self.do2(x)
@@ -140,16 +159,34 @@ class RawCNNProbe(nn.Module):
 
 
 class RawCNNScalarProbe(RawCNNProbe):
-    """Same as RawCNNProbe, but takes 7 channels instead of 3: T/S/O plus
-    lat/lon/day_rad/year, each broadcast to a constant-valued channel across
-    all 200 depth points before the conv stack sees them (no learned scalar
-    encoding, unlike PPCon's four 3-layer MLPs). CNN-backbone counterpart to
-    RawTransformerScalarProbe. Broadcasting is done by the caller (train.py /
-    evaluate.py), not here, so this class is just RawCNNProbe with
-    in_channels=7 and no other changes."""
+    """Same backbone as RawCNNProbe (in_channels=3, T/S/O only), but
+    lat/lon/day_rad/year are concatenated as 4 extra constant-valued channels
+    right before the final conv (conv17), once the spatial dimension is back
+    to 200 (matches the depth grid) and after T/S/O has gone through the
+    entire conv/deconv stack alone (no learned scalar encoding, unlike
+    PPCon's four 3-layer MLPs). CNN-backbone counterpart to
+    RawTransformerScalarProbe. Broadcasting the scalars to (B, D, 4) is done
+    by the caller (train.py / evaluate.py); this class concatenates and
+    replaces conv17 (32 -> 36 in_channels)."""
 
-    def __init__(self, in_channels=7, dp_rate=0.2):
+    def __init__(self, in_channels=3, n_scalars=4, dp_rate=0.2):
         super().__init__(in_channels=in_channels, dp_rate=dp_rate)
+        self.conv17 = nn.Conv1d(32 + n_scalars, 1, kernel_size=3, stride=1, padding=1)
+
+    def forward(self, profile, depth_levels=None, scalars=None):
+        # profile: (B, D, 3), scalars: (B, D, 4) already broadcast/z-scored by caller
+        x = profile.transpose(1, 2)
+        x = self.bn1(self.af1(self.conv1(x))); x = self.do1(x)
+        x = self.bn2(self.af2(self.conv2(x))); x = self.do2(x)
+        x = self.bn3(self.af3(self.conv3(x))); x = self.do3(x)
+        x = self.bn12(self.af12(self.conv12(x))); x = self.do12(x)
+        x = self.bn13(self.af13(self.deconv13(x))); x = self.do13(x)
+        x = self.bn14(self.af14(self.conv14(x))); x = self.do14(x)
+        x = self.bn15(self.af15(self.deconv15(x))); x = self.do15(x)
+        x = self.bn16(self.af16(self.conv16(x))); x = self.do16(x)  # (B, 32, 200)
+        x = torch.cat([x, scalars.transpose(1, 2)], dim=1)          # (B, 36, 200)
+        x = self.conv17(x)
+        return x.transpose(1, 2)  # back to (B, D, 1)
 
 
 def count_params(model):

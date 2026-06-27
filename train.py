@@ -2,9 +2,10 @@
 Trains RawTransformerProbe, RawTransformerScalarProbe, RawCNNProbe, or
 RawCNNScalarProbe on PPCon's own dataset. transformer/cnn use T/S/O only, no
 lat/lon/day/year. transformer_scalar/cnn_scalar add those four scalars back
-in as constant-valued depth channels (broadcast here, no learned encoding).
-PPCon's published RMSE is the comparison target, not something retrained
-here.
+in, broadcast here as constant-valued depth channels, z-scored, then
+concatenated by the model after its backbone (see models.py) rather than at
+the input. PPCon's published RMSE is the comparison target, not something
+retrained here.
 
     python train.py --model transformer --target_var NITRATE
     python train.py --model transformer_scalar --target_var NITRATE
@@ -60,18 +61,17 @@ def run_epoch(model, loader, depth_levels, device, optimizer=None, max_grad_norm
             profile = torch.stack([temp, psal, doxy], dim=-1).to(device)  # (B, D, 3)
             target = target.unsqueeze(-1).to(device)                      # (B, D, 1)
 
+            scalars = None
             if use_scalars:
-                # broadcast each scalar to a constant-valued depth channel,
-                # no learned encoding (that's the point of this ablation).
-                # z-scored first, raw lat/lon/day_rad/year are on wildly
-                # different scales from each other and from T/S/O.
+                # broadcast each (z-scored) scalar to a constant-valued depth
+                # channel; the model concatenates these after its backbone,
+                # not at the input (see models.py for why).
                 b = profile.shape[0]
                 lat, lon, day_rad, year = normalize_scalars(lat, lon, day_rad, year)
                 scalars = torch.stack([lat, lon, day_rad, year], dim=-1).to(device)  # (B, 4)
-                scalars = scalars.view(b, 1, 4).expand(b, n_depth, 4)
-                profile = torch.cat([profile, scalars], dim=-1)  # (B, D, 7)
+                scalars = scalars.view(b, 1, 4).expand(b, n_depth, 4)  # (B, D, 4)
 
-            output = model(profile, depth_levels)
+            output = model(profile, depth_levels, scalars)
             loss = mse_loss(output, target)
 
             if train_mode:

@@ -78,8 +78,10 @@ def per_profile_rmse(model, dataset, depth_levels, target_var, device, is_ppcon=
     from load_ppcon_checkpoint and the forward pass goes through ppcon_forward
     instead of the RawCNNProbe/RawCNNScalarProbe/RawTransformerProbe/
     RawTransformerScalarProbe call. use_scalars=True (transformer_scalar/
-    cnn_scalar) broadcasts lat/lon/day_rad/year to constant-valued depth
-    channels before the model call, same as train.py's run_epoch."""
+    cnn_scalar) broadcasts (z-scored) lat/lon/day_rad/year to constant-valued
+    depth channels and passes them to the model as a separate `scalars`
+    argument, concatenated after the backbone, not at the input, same as
+    train.py's run_epoch."""
     loader = DataLoader(dataset, batch_size=1, shuffle=False)
     if not is_ppcon:
         model.eval()
@@ -95,13 +97,13 @@ def per_profile_rmse(model, dataset, depth_levels, target_var, device, is_ppcon=
                 pred = ppcon_forward(model, year, day_rad, lat, lon, temp, psal, doxy).squeeze()
             else:
                 profile = torch.stack([temp, psal, doxy], dim=-1).to(device)
+                scalars = None
                 if use_scalars:
                     b = profile.shape[0]
                     n_lat, n_lon, n_day_rad, n_year = normalize_scalars(lat, lon, day_rad, year)
                     scalars = torch.stack([n_lat, n_lon, n_day_rad, n_year], dim=-1).to(device)
                     scalars = scalars.view(b, 1, 4).expand(b, n_depth, 4)
-                    profile = torch.cat([profile, scalars], dim=-1)
-                pred = model(profile, depth_levels).squeeze()      # (200,)
+                pred = model(profile, depth_levels, scalars).squeeze()  # (200,)
             true = target.squeeze().to(device)                  # (200,)
 
             if target_var == "NITRATE":
