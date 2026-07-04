@@ -35,3 +35,7 @@ results/
 
 # slurm scripts
 slurm/*
+
+# temporary scripts
+visualizations/*
+spatial_coverage.py
