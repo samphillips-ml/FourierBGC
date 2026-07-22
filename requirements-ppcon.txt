@@ -1,0 +1,9 @@
+# Only needed for ppcon/ppcon_no_scalar training scripts (ppcon_baseline/,
+# ppcon_no_scalar/run.py) -- NOT needed for the 6-model seeded ablation
+# sweep (slurm/train_eval_seeded_ablation.slurm), which only activates
+# .venv. Skip installing this venv entirely unless you're separately
+# retraining ppcon or ppcon_no_scalar.
+torch
+numpy
+pandas
+ipython
