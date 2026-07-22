@@ -203,6 +203,22 @@ class FourierBGC(RawCNNProbe):
         super().__init__(in_channels=in_channels, dp_rate=dp_rate)
 
 
+class FourierBGCWithYear(RawCNNProbe):
+    """Exploratory variant of FourierBGC (NOT part of the main ablation
+    spine): FourierBGC's 21 input channels (3 T/S/O + 18 Fourier features)
+    plus one extra channel for year, broadcast raw/z-scored (not
+    Fourier-encoded) across depth, for 22 total. Year is intentionally left
+    unencoded here since it is not periodic and doesn't belong in the
+    sin/cos Fourier family that day/lat/lon use; this isolates whether
+    year's raw information helps or hurts, independent of any
+    encoding-structure question. Broadcasting/concatenation of both the
+    Fourier features and the raw year channel is done by the caller
+    (train.py / evaluate.py), same as FourierBGC."""
+
+    def __init__(self, in_channels=22, dp_rate=0.2):
+        super().__init__(in_channels=in_channels, dp_rate=dp_rate)
+
+
 def count_params(model):
     return sum(p.numel() for p in model.parameters())
 

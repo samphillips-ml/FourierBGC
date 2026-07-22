@@ -37,7 +37,7 @@ from models import (RawTransformerProbe, RawTransformerScalarProbe, RawCNNProbe,
                      RawCNNScalarProbe, FourierBGC)
 from ppcon_eval import load_ppcon_checkpoint, ppcon_forward
 from ppcon_no_scalar_eval import load_ppcon_no_scalar_checkpoint, ppcon_no_scalar_forward
-from scalar_norm import normalize_scalars
+from scalar_norm import normalize_scalars, SCALAR_STATS
 from train import DEPTH_GRIDS, make_model
 
 # from utils_analysis.py, dict_ga: [[lat_min, lat_max], [lon_min, lon_max]]
@@ -78,7 +78,8 @@ def assign_season(day):
 
 
 def per_profile_rmse(model, dataset, depth_levels, target_var, device, is_ppcon=False,
-                      is_ppcon_no_scalar=False, use_scalars=False, use_fourier=False):
+                      is_ppcon_no_scalar=False, use_scalars=False, use_fourier=False,
+                      use_fourier_year=False):
     """Runs every profile through the model one at a time (matches PPCon's
     own get_reconstruction, which also iterates with shuffle and no batching),
     returns per-profile RMSE plus the lat/lon/season needed for bucketing.
@@ -126,6 +127,16 @@ def per_profile_rmse(model, dataset, depth_levels, target_var, device, is_ppcon=
                     fourier = compute_fourier_features(day_rad_d, lat_d, lon_d)  # (B, 18)
                     fourier = fourier.view(b, 18, 1).expand(b, 18, n_depth).transpose(1, 2)
                     profile = torch.cat([profile, fourier], dim=-1)  # (B, D, 21)
+                elif use_fourier_year:
+                    b = profile.shape[0]
+                    day_rad_d, lat_d, lon_d = day_rad.to(device), lat.to(device), lon.to(device)
+                    year_d = year.to(device)
+                    fourier = compute_fourier_features(day_rad_d, lat_d, lon_d)  # (B, 18)
+                    fourier = fourier.view(b, 18, 1).expand(b, 18, n_depth).transpose(1, 2)
+                    year_mean, year_std = SCALAR_STATS["year"]
+                    year_z = (year_d - year_mean) / year_std
+                    year_ch = year_z.view(b, 1, 1).expand(b, n_depth, 1)  # (B, D, 1)
+                    profile = torch.cat([profile, fourier, year_ch], dim=-1)  # (B, D, 22)
                 pred = model(profile, depth_levels, scalars).squeeze()  # (200,)
             true = target.squeeze().to(device)                  # (200,)
 
@@ -179,7 +190,7 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--model",
                    choices=["transformer", "transformer_scalar", "cnn", "cnn_scalar",
-                            "fourierbgc", "ppcon", "ppcon_no_scalar"],
+                            "fourierbgc", "fourierbgc_with_year", "ppcon", "ppcon_no_scalar"],
                    required=True)
     p.add_argument("--target_var", choices=["NITRATE", "CHLA", "BBP700"], required=True)
     p.add_argument("--checkpoint", help="required for --model transformer/cnn")
@@ -218,8 +229,10 @@ def main():
         model.load_state_dict(torch.load(args.checkpoint, map_location=device))
         use_scalars = args.model in ("transformer_scalar", "cnn_scalar")
         use_fourier = args.model == "fourierbgc"
+        use_fourier_year = args.model == "fourierbgc_with_year"
         records = per_profile_rmse(model, test_ds, depth_levels, args.target_var, device,
-                                    use_scalars=use_scalars, use_fourier=use_fourier)
+                                    use_scalars=use_scalars, use_fourier=use_fourier,
+                                    use_fourier_year=use_fourier_year)
 
     summarize(records)
 

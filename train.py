@@ -26,8 +26,9 @@ from torch.utils.data import DataLoader
 from dataset import FloatDataset
 from fourier_features import compute_fourier_features
 from models import (RawTransformerProbe, RawTransformerScalarProbe, RawCNNProbe,
-                     RawCNNScalarProbe, FourierBGC)
-from scalar_norm import normalize_scalars
+                     RawCNNScalarProbe, FourierBGC, FourierBGCWithYear)
+from scalar_norm import normalize_scalars, SCALAR_STATS
+from seeding import set_seed, seeded_generator
 
 # PPCon's own depth grids (dict.py): nitrate 0-1000m @ 5m, chla/bbp700 0-200m @ 1m.
 # both land at 200 points but they're physically different distances.
@@ -51,11 +52,13 @@ def make_model(name):
         return RawCNNScalarProbe()
     elif name == "fourierbgc":
         return FourierBGC()
+    elif name == "fourierbgc_with_year":
+        return FourierBGCWithYear()
     raise ValueError(f"unknown model {name}")
 
 
 def run_epoch(model, loader, depth_levels, device, optimizer=None, max_grad_norm=1.0,
-              use_scalars=False, use_fourier=False):
+              use_scalars=False, use_fourier=False, use_fourier_year=False):
     train_mode = optimizer is not None
     model.train() if train_mode else model.eval()
 
@@ -85,6 +88,20 @@ def run_epoch(model, loader, depth_levels, device, optimizer=None, max_grad_norm
                 fourier = compute_fourier_features(day_rad, lat, lon)  # (B, 18)
                 fourier = fourier.view(b, 18, 1).expand(b, 18, n_depth).transpose(1, 2)  # (B, D, 18)
                 profile = torch.cat([profile, fourier], dim=-1)  # (B, D, 21)
+            elif use_fourier_year:
+                # exploratory FourierBGCWithYear variant: FourierBGC's 21
+                # channels plus one raw (non-Fourier-encoded), z-scored year
+                # channel broadcast across depth, fused at the input, 22
+                # total. See models.py: FourierBGCWithYear.
+                b = profile.shape[0]
+                day_rad, lat, lon = day_rad.to(device), lat.to(device), lon.to(device)
+                year = year.to(device)
+                fourier = compute_fourier_features(day_rad, lat, lon)  # (B, 18)
+                fourier = fourier.view(b, 18, 1).expand(b, 18, n_depth).transpose(1, 2)  # (B, D, 18)
+                year_mean, year_std = SCALAR_STATS["year"]
+                year_z = (year - year_mean) / year_std
+                year_ch = year_z.view(b, 1, 1).expand(b, n_depth, 1)  # (B, D, 1)
+                profile = torch.cat([profile, fourier, year_ch], dim=-1)  # (B, D, 22)
 
             output = model(profile, depth_levels, scalars)
             loss = mse_loss(output, target)
@@ -117,14 +134,26 @@ def make_scheduler(optimizer, total_epochs, warmup_epochs=5):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--model",
-                   choices=["transformer", "transformer_scalar", "cnn", "cnn_scalar", "fourierbgc"],
+                   choices=["transformer", "transformer_scalar", "cnn", "cnn_scalar", "fourierbgc",
+                            "fourierbgc_with_year"],
                    required=True)
     p.add_argument("--target_var", choices=["NITRATE", "CHLA", "BBP700"], required=True)
     p.add_argument("--epochs", type=int, default=100)
     p.add_argument("--lr", type=float, default=1e-3)
     p.add_argument("--batch_size", type=int, default=32)
     p.add_argument("--results_dir", default="results")
+    p.add_argument("--save_dir", default=None,
+                    help="override the computed save_dir (results_dir/target_var/model); "
+                         "used to route exploratory variants to their own directory tree")
+    p.add_argument("--seed", type=int, default=None,
+                    help="optional seed for reproducibility: seeds python/numpy/torch RNG "
+                         "and the train DataLoader's shuffle order. Default None preserves "
+                         "the old unseeded behavior exactly (every existing single-run model "
+                         "in this repo was trained this way).")
     args = p.parse_args()
+
+    if args.seed is not None:
+        set_seed(args.seed)
 
     if torch.cuda.is_available():
         device = "cuda"
@@ -132,21 +161,24 @@ def main():
      #   device = "mps"
     else:
         device = "cpu"
-    print(f"device: {device}, model: {args.model}, target: {args.target_var}")
+    print(f"device: {device}, model: {args.model}, target: {args.target_var}, seed: {args.seed}")
 
     train_ds = FloatDataset(os.path.join(DATA_DIR, args.target_var, "float_ds_sf_train.csv"))
     test_ds = FloatDataset(os.path.join(DATA_DIR, args.target_var, "float_ds_sf_test.csv"))
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True)
+    train_generator = seeded_generator(args.seed) if args.seed is not None else None
+    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
+                               generator=train_generator)
     test_loader = DataLoader(test_ds, batch_size=args.batch_size, shuffle=False)
 
     model = make_model(args.model).to(device)
     use_scalars = args.model in ("transformer_scalar", "cnn_scalar")
     use_fourier = args.model == "fourierbgc"
+    use_fourier_year = args.model == "fourierbgc_with_year"
     depth_levels = DEPTH_GRIDS[args.target_var].to(device)
     optimizer = Adam(model.parameters(), lr=args.lr)
     scheduler = make_scheduler(optimizer, args.epochs)
 
-    save_dir = os.path.join(args.results_dir, args.target_var, args.model)
+    save_dir = args.save_dir or os.path.join(args.results_dir, args.target_var, args.model)
     os.makedirs(save_dir, exist_ok=True)
     log_path = os.path.join(save_dir, "log.txt")
 
@@ -154,9 +186,11 @@ def main():
     with open(log_path, "w") as log:
         for ep in range(args.epochs):
             train_mse = run_epoch(model, train_loader, depth_levels, device, optimizer,
-                                   use_scalars=use_scalars, use_fourier=use_fourier)
+                                   use_scalars=use_scalars, use_fourier=use_fourier,
+                                   use_fourier_year=use_fourier_year)
             test_mse = run_epoch(model, test_loader, depth_levels, device, optimizer=None,
-                                  use_scalars=use_scalars, use_fourier=use_fourier)
+                                  use_scalars=use_scalars, use_fourier=use_fourier,
+                                  use_fourier_year=use_fourier_year)
             scheduler.step()
 
             line = (f"epoch {ep+1:4d}  train_mse {train_mse:.5f}  test_mse {test_mse:.5f}"
