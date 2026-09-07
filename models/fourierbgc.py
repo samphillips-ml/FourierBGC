@@ -10,15 +10,13 @@ projection.
     fourier_proj: 18 -> 32 -> 64 -> 200  (15,720 params)
     year_proj:     1 -> 16 -> 200        ( 3,432 params)
 
-19,152 parameters in total against the 158,800 PPCon spends on four separately
-parameterized encoders -- an 88 % reduction -- occupying the same position in
-the network as PPCon's four encoder outputs.
+19,152 parameters
 
 The three coordinates share one projection rather than receiving separate
 networks. That is the simplest configuration that isolates the effect of the
 fixed encoding against CNN-MLPCoord's learned per-coordinate encoders without
-introducing further un-ablated architectural choices. Whether splitting the
-projection per coordinate changes the result is left to future work.
+introducing further un-ablated architectural choices. As I mentioned in the paper,
+future work could detail ablate seperate channels for the projections.
 """
 import torch
 import torch.nn as nn
@@ -51,9 +49,6 @@ class FourierBGC(Conv1dMed):
         )
 
     def forward(self, profile, depth_levels, day_rad, year, lat, lon):
-        # Argument order follows the paper's Eq. (2), c = (d, t, phi, lambda),
-        # and matches CNNMLPCoord.forward. Reordering forward() arguments does
-        # not affect checkpoints: state_dict keys are layer attribute paths.
         fourier = compute_fourier_features(day_rad, lat, lon)        # (B, 18)
         fourier_channel = self.fourier_proj(fourier).unsqueeze(-1)   # (B, 200, 1)
 

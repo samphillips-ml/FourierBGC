@@ -2,25 +2,8 @@
 CNN-MLPCoord: PPCon's four learned per-coordinate encoders under the common
 training recipe.
 
-This is the pivot of the whole ablation. Every other model trained with the
-common recipe can be compared with the recipe held fixed, but PPCon's own
-encoding could otherwise only be compared across a recipe change as well.
-Without this model the claim "the Fourier encoding beats PPCon's learned
-per-coordinate encoding" is confounded by optimizer, schedule, clipping and
-loss all differing at once. With it:
-  - against PPCon it isolates the training procedure, encoder held fixed
-  - against FourierBGC it isolates the encoding, procedure held fixed
-
-The encoder is deliberately identical in shape to PPCon's: four independent
-MLPs, one per coordinate, each 1 -> 80 -> 140 -> 200 with SELU after every
-layer including the last (matching third_party/ppcon/ppcon/train/mlp.py, which
-applies SELU to the output layer even though their Table 1 shows none).
-39,700 params each, 158,800 total. C = 7, exactly PPCon's tensor.
-
-Inputs are fed RAW and unnormalized, again matching PPCon, whose training and
-evaluation code normalize nothing anywhere. That is the faithful choice for
-isolating the recipe; normalizing here would change two things at once.
-normalize=True exists as a fallback that was never needed.
+The encoder is identical to PPcon, and we apply the common training recipe. 
+We do not normalize the inputs, just like PPcon.
 """
 import torch
 import torch.nn as nn

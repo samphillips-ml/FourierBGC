@@ -3,16 +3,17 @@ CNN-RawCoord: the four coordinates supplied raw, fused late.
 
 day-of-year, year, latitude and longitude are z-scored with fixed statistics
 from the training split (helpers/scalar_norm.py) and broadcast along depth,
-then concatenated *after* the full convolutional stack, immediately before the
+then concatenated after the full convolutional stack, immediately before the
 final projection, which widens from 32 to 36 input channels.
 
 Late fusion was adopted after concatenating raw-scale values at the input
 produced training instability: unlike the Fourier features, raw coordinates
 are not bounded, so every layer from conv1 onward saw inputs on wildly
 different scales. This model isolates whether making the coordinates available
-at all, untransformed, is sufficient. It is not -- see Sect. 6.2.
+at all, untransformed, is sufficient. It is not -- see Sect. 6.2 in the paper
+for more details.
 
-Broadcasting to (B, D, 4) is done by the caller (train.py / evaluate.py).
+Broadcasting and concatenation are done by the caller (train.py / evaluate.py).
 """
 import torch
 import torch.nn as nn

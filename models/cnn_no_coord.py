@@ -2,9 +2,7 @@
 CNN-NoCoord: the shared backbone with no coordinate representation at all.
 
 C = 3 (temperature, salinity, dissolved oxygen). Trained under the common
-recipe. Two roles in the ablation: compared against PPCon-NoCoord it isolates
-the training procedure with the architecture held fixed, and it is the model
-that tests whether the spatiotemporal coordinates are needed at all.
+recipe. This variant isolates the effect of coordinates at all.
 
 252,737 parameters, 0 of them in a coordinate encoder.
 """

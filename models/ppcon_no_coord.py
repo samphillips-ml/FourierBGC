@@ -7,18 +7,14 @@ they are trained, which is what makes the pair a clean isolation of the recipe.
 
 It converges poorly -- 1.8265 on nitrate against PPCon's 0.5234 -- and is read
 as a control on that recipe rather than as evidence that the coordinates
-matter. It is also the only model in the spine with substantial seed-to-seed
-variance (43 % of its mean on nitrate, 32 % on bbp700, against 3 % or less
-everywhere else), which is what a mismatched regularization strength would
-produce: PPCon's loss applies a weight-regularization coefficient tuned across
-all 412,049 parameters, and removing the encoders removes 158,800 of them.
+matter. This variant had pretty heavy seed variance, as detailed in the paper. 
+A reasonable hypothesis is that PPcon uses a lot of regularization techniques,
+but when the MLP encoders are removed these techniques overcorrect, producing 
+the poor training. 
 
 There is no class of our own here. The model *is* PPCon's Conv1dMed with
 in_channels monkeypatched to 3, so this module holds the loader and the
-forward pass rather than a definition. in_channels is a module-level constant
-in PPCon's conv1med_dp.py, so it is patched only for the duration of model
-construction and then restored, letting this coexist in one process with the
-7-channel PPCon loader in helpers/ppcon_eval.py.
+forward pass rather than a definition.
 """
 import os
 import sys

@@ -4,15 +4,14 @@ FourierBGC-Broadcast: the fixed Fourier encoding with no learned projection.
 Broadcasts the 18-dimensional Fourier encoding of day-of-year, latitude and
 longitude (helpers/fourier_features.py, harmonics 1/2/4) plus the z-scored
 year directly along the depth dimension, using no learned parameters at all.
-C = 22: 3 profile channels + 18 Fourier + 1 year.
+So C = 22: 3 profile channels + 18 Fourier + 1 year.
 
 Comparing this against FourierBGC isolates exactly what the learned projection
-contributes beyond the fixed encoding. That contribution turns out to be
-variable-dependent: decisive on chlorophyll-a, immaterial on nitrate, and a net
-cost on bbp700, where this parameter-free model is the best in the study.
+contributes beyond the fixed encoding.
 
-Year is deliberately left unencoded: it is not periodic over 2012-2020 and
-does not belong in the sin/cos family day/lat/lon use.
+It should be noted that year is deliberately left unencoded: 
+it is not periodic over 2012-2020 and does not belong in the 
+sin/cos family day/lat/lon use.
 
 Broadcasting and concatenation are done by the caller (train.py / evaluate.py).
 """

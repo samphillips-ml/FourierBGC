@@ -9,16 +9,12 @@ convolutions and transposed convolutions, each followed by SELU then batch
 normalization then dropout, except the final projection (conv17), which maps
 the last hidden state directly to the single output channel.
 
-We follow PPCon's released code rather than their Table 2, which lists batch
-normalization and a SELU activation on that final layer that the code does not
-apply.
-
 Every model in models/ subclasses this. Only `in_channels` and, for
 CNN-RawCoord, the width of conv17 differ.
 
-IMPORTANT: the attribute names below (conv1, bn1, deconv13, ...) are the keys
-of every saved state_dict. Renaming any of them silently invalidates all 105
-archived checkpoints. Class and file names are free to change; these are not.
+Note that the attribute names below (conv1, bn1, deconv13, ...) are the keys
+of every saved state_dict. Renaming these will invalidate the checkpoints.
+ Class and file names are free to change; these are not.
 """
 import torch.nn as nn
 
