@@ -27,7 +27,7 @@ archive/         superseded runs; not tracked, not needed
 
 ## Models
 
-The paper and the code use different names.
+The paper and the code use slightly different names, most of this is translating from English prose to snake case however. The table below is the exact mapping.
 
 | Paper | `--model` | File |
 |---|---|---|
