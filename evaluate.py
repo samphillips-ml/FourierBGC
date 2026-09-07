@@ -26,6 +26,7 @@ is the form Appendix B's Table B1 number (0.52 for nitrate) is in.
         --checkpoint_dir ~/ppcon_results_no_scalar/NITRATE/model --epoch 200
 """
 import argparse
+import os
 
 import numpy as np
 import torch
@@ -197,6 +198,51 @@ def summarize(records):
               f"boxes, excluded from the regional breakdown (but included in 'overall')")
 
 
+def evaluate_checkpoint(key, target_var, test_ds, depth_levels, device,
+                        checkpoint=None, checkpoint_dir=None, epoch=None, dp_rate=0.2):
+    """Loads one checkpoint and returns its per-profile records."""
+    if key == "ppcon":
+        model = load_ppcon_checkpoint(checkpoint_dir, epoch, device, dp_rate=dp_rate)
+        return per_profile_rmse(model, test_ds, depth_levels, target_var, device, is_ppcon=True)
+    if key == "ppcon_no_coord":
+        model = load_ppcon_no_coord_checkpoint(checkpoint_dir, epoch, device, dp_rate=dp_rate)
+        return per_profile_rmse(model, test_ds, depth_levels, target_var, device,
+                                is_ppcon_no_scalar=True)
+    model = make_model(key).to(device)
+    model.load_state_dict(torch.load(checkpoint, map_location=device))
+    return per_profile_rmse(
+        model, test_ds, depth_levels, target_var, device,
+        use_scalars=(key == "cnn_raw_coord"),
+        use_fourier=False,
+        use_fourier_year=(key == "fourierbgc_broadcast"),
+        use_mlpcoord=(key in ("cnn_mlp_coord", "cnn_mlp_coord_norm")),
+        use_flp=(key == "fourierbgc"))
+
+
+def summarize_seeds(per_seed_records):
+    """Mean and standard deviation across seeds, for the pooled figure and for
+    every region and season bucket. This is the form the manuscript's tables
+    report, so it is what you want when checking a published number."""
+    def bucket(records, name):
+        if name == "overall":
+            return [r["rmse"] for r in records]
+        if name in REGIONS:
+            return [r["rmse"] for r in records if assign_region(r["lat"], r["lon"]) == name]
+        return [r["rmse"] for r in records if assign_season(r["day"]) == name]
+
+    n = len(per_seed_records)
+    print(f"\nacross {n} seeds, mean (sd):\n")
+    for name in ["overall"] + list(REGIONS) + list(SEASONS):
+        means = [np.mean(v) for v in (bucket(rec, name) for rec in per_seed_records) if len(v)]
+        if not means:
+            continue
+        mu = float(np.mean(means))
+        sd = float(np.std(means, ddof=1)) if n > 1 else 0.0
+        label = "pooled" if name == "overall" else name
+        count = len(bucket(per_seed_records[0], name))
+        print(f"  {label:8s} {mu:.6g}  (sd {sd:.3g})   n={count}")
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--model",
@@ -218,14 +264,26 @@ def main():
                    help="ppcon/ppcon_no_scalar Conv1dMed dropout rate; inactive in eval mode, "
                    "value has no effect")
     p.add_argument("--data_dir", default="data")
+    p.add_argument("--seeds", default=None,
+                   help="comma-separated seeds, e.g. 0,1,2,3,4. Evaluates every seed and "
+                        "reports mean and sd across them, deriving checkpoint paths from "
+                        "--results_dir. Overrides --checkpoint/--checkpoint_dir.")
+    p.add_argument("--results_dir", default="results",
+                   help="root for --seeds path derivation (default: results)")
     args = p.parse_args()
 
-    if resolve(args.model) in ("ppcon", "ppcon_no_coord"):
+    seeds = [int(x) for x in args.seeds.split(",")] if args.seeds else None
+
+    if seeds is not None:
+        if resolve(args.model) == "ppcon":
+            p.error("--model ppcon has no seeds; it is a single released checkpoint")
+        if resolve(args.model) == "ppcon_no_coord" and args.epoch is None:
+            p.error("--model ppcon_no_coord with --seeds still requires --epoch")
+    elif resolve(args.model) in ("ppcon", "ppcon_no_coord"):
         if not args.checkpoint_dir or args.epoch is None:
             p.error(f"--model {args.model} requires --checkpoint_dir and --epoch")
     elif not args.checkpoint:
-        p.error("--model transformer/transformer_scalar/cnn/cnn_scalar/fourierbgc "
-                "requires --checkpoint")
+        p.error(f"--model {args.model} requires --checkpoint (or --seeds)")
 
     device = "cuda" if torch.cuda.is_available() else (
         "mps" if torch.backends.mps.is_available() else "cpu")
@@ -234,25 +292,28 @@ def main():
     test_ds = FloatDataset(f"{args.data_dir}/{args.target_var}/float_ds_sf_test.csv")
 
     key = resolve(args.model)
-    if key == "ppcon":
-        model = load_ppcon_checkpoint(args.checkpoint_dir, args.epoch, device, dp_rate=args.dp_rate)
-        records = per_profile_rmse(model, test_ds, depth_levels, args.target_var, device, is_ppcon=True)
-    elif resolve(args.model) == "ppcon_no_coord":
-        model = load_ppcon_no_coord_checkpoint(args.checkpoint_dir, args.epoch, device, dp_rate=args.dp_rate)
-        records = per_profile_rmse(model, test_ds, depth_levels, args.target_var, device,
-                                    is_ppcon_no_scalar=True)
-    else:
-        model = make_model(args.model).to(device)
-        model.load_state_dict(torch.load(args.checkpoint, map_location=device))
-        use_scalars = key == "cnn_raw_coord"
-        use_fourier = False  # 21-channel no-year variant, not in the manuscript
-        use_fourier_year = key == "fourierbgc_broadcast"
-        use_mlpcoord = key in ("cnn_mlp_coord", "cnn_mlp_coord_norm")
-        use_flp = key == "fourierbgc"
-        records = per_profile_rmse(model, test_ds, depth_levels, args.target_var, device,
-                                    use_scalars=use_scalars, use_fourier=use_fourier,
-                                    use_fourier_year=use_fourier_year,
-                                    use_mlpcoord=use_mlpcoord, use_flp=use_flp)
+
+    if seeds is not None:
+        per_seed = []
+        for sd in seeds:
+            base = os.path.join(args.results_dir, key, f"seed{sd}", args.target_var)
+            if key == "ppcon_no_coord":
+                per_seed.append(evaluate_checkpoint(
+                    key, args.target_var, test_ds, depth_levels, device,
+                    checkpoint_dir=os.path.join(base, "model"), epoch=args.epoch,
+                    dp_rate=args.dp_rate))
+            else:
+                per_seed.append(evaluate_checkpoint(
+                    key, args.target_var, test_ds, depth_levels, device,
+                    checkpoint=os.path.join(base, "best.pt")))
+            print(f"  seed {sd}: done", flush=True)
+        summarize_seeds(per_seed)
+        return
+
+    records = evaluate_checkpoint(
+        key, args.target_var, test_ds, depth_levels, device,
+        checkpoint=args.checkpoint, checkpoint_dir=args.checkpoint_dir,
+        epoch=args.epoch, dp_rate=args.dp_rate)
 
     summarize(records)
 

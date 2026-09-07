@@ -45,7 +45,7 @@ DATA_DIR = "data"
 
 def run_epoch(model, loader, depth_levels, device, optimizer=None, max_grad_norm=1.0,
               use_scalars=False, use_fourier=False, use_fourier_year=False,
-              use_mlpcoord=False):
+              use_mlpcoord=False, use_flp=False):
     train_mode = optimizer is not None
     model.train() if train_mode else model.eval()
 
@@ -89,9 +89,11 @@ def run_epoch(model, loader, depth_levels, device, optimizer=None, max_grad_norm
                 year_ch = year_z.view(b, 1, 1).expand(b, n_depth, 1)  # (B, D, 1)
                 profile = torch.cat([profile, fourier, year_ch], dim=-1)  # (B, D, 22)
 
-            if use_mlpcoord:
-                # PPCon's own encoder signature: four raw scalars, each through
-                # its own MLP inside the model (see models/cnn_mlp_coord.py).
+            if use_mlpcoord or use_flp:
+                # Both take the four raw coordinates and encode them inside the
+                # model: CNN-MLPCoord through four per-coordinate MLPs,
+                # FourierBGC through the fixed Fourier basis plus a projection.
+                # They share a signature, so one branch serves both.
                 output = model(profile, depth_levels,
                                day_rad.to(device), year.to(device),
                                lat.to(device), lon.to(device))
@@ -128,12 +130,12 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--model",
                    choices=["cnn_no_coord", "cnn_raw_coord", "cnn_mlp_coord",
-                            "fourierbgc_broadcast", "cnn_mlp_coord_norm",
+                            "fourierbgc_broadcast", "fourierbgc", "cnn_mlp_coord_norm",
                             # legacy aliases, kept so old commands keep working
-                            "cnn", "cnn_scalar", "cnn_mlpcoord", "fourierbgc_with_year"],
+                            "cnn", "cnn_scalar", "cnn_mlpcoord", "fourierbgc_with_year",
+                            "fourierbgc_learned"],
                    required=True,
-                   help="see models/__init__.py for the paper-name mapping. FourierBGC is "
-                        "trained by scripts/train_fourierbgc.py, not here.")
+                   help="see models/__init__.py for the paper-name mapping")
     p.add_argument("--target_var", choices=["NITRATE", "CHLA", "BBP700"], required=True)
     p.add_argument("--epochs", type=int, default=100)
     p.add_argument("--lr", type=float, default=1e-3)
@@ -173,11 +175,17 @@ def main():
     use_fourier = False  # the 21-channel no-year variant is not in the manuscript
     use_fourier_year = key == "fourierbgc_broadcast"
     use_mlpcoord = key in ("cnn_mlp_coord", "cnn_mlp_coord_norm")
+    use_flp = key == "fourierbgc"
     depth_levels = DEPTH_GRIDS[args.target_var].to(device)
     optimizer = Adam(model.parameters(), lr=args.lr)
     scheduler = make_scheduler(optimizer, args.epochs)
 
-    save_dir = args.save_dir or os.path.join(args.results_dir, resolve(args.model), args.target_var)
+    if args.save_dir:
+        save_dir = args.save_dir
+    elif args.seed is not None:
+        save_dir = os.path.join(args.results_dir, key, f"seed{args.seed}", args.target_var)
+    else:
+        save_dir = os.path.join(args.results_dir, key, args.target_var)
     os.makedirs(save_dir, exist_ok=True)
     log_path = os.path.join(save_dir, "log.txt")
 
@@ -187,11 +195,11 @@ def main():
             train_mse = run_epoch(model, train_loader, depth_levels, device, optimizer,
                                    use_scalars=use_scalars, use_fourier=use_fourier,
                                    use_fourier_year=use_fourier_year,
-                                   use_mlpcoord=use_mlpcoord)
+                                   use_mlpcoord=use_mlpcoord, use_flp=use_flp)
             test_mse = run_epoch(model, test_loader, depth_levels, device, optimizer=None,
                                   use_scalars=use_scalars, use_fourier=use_fourier,
                                   use_fourier_year=use_fourier_year,
-                                  use_mlpcoord=use_mlpcoord)
+                                  use_mlpcoord=use_mlpcoord, use_flp=use_flp)
             scheduler.step()
 
             line = (f"epoch {ep+1:4d}  train_mse {train_mse:.5f}  test_mse {test_mse:.5f}"
