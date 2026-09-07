@@ -50,10 +50,10 @@ class FourierBGC(Conv1dMed):
             nn.SELU(),
         )
 
-    def forward(self, profile, depth_levels, day_rad, lat, lon, year):
-        # NOTE the argument order: (day_rad, lat, lon, year). CNN-MLPCoord uses
-        # (day_rad, year, lat, lon). Both are preserved as-is to match the call
-        # sites the checkpoints were trained under.
+    def forward(self, profile, depth_levels, day_rad, year, lat, lon):
+        # Argument order follows the paper's Eq. (2), c = (d, t, phi, lambda),
+        # and matches CNNMLPCoord.forward. Reordering forward() arguments does
+        # not affect checkpoints: state_dict keys are layer attribute paths.
         fourier = compute_fourier_features(day_rad, lat, lon)        # (B, 18)
         fourier_channel = self.fourier_proj(fourier).unsqueeze(-1)   # (B, 200, 1)
 

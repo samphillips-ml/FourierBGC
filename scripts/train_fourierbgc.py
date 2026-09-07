@@ -51,7 +51,7 @@ def run_epoch(model, loader, depth_levels, device, optimizer=None, max_grad_norm
             day_rad, lat, lon = day_rad.to(device), lat.to(device), lon.to(device)
             year = year.to(device)
 
-            output = model(profile, depth_levels, day_rad, lat, lon, year)
+            output = model(profile, depth_levels, day_rad, year, lat, lon)
             loss = mse_loss(output, target)
 
             if train_mode:

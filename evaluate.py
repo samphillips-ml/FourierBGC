@@ -138,10 +138,9 @@ def per_profile_rmse(model, dataset, depth_levels, target_var, device, is_ppcon=
                     year_ch = year_z.view(b, 1, 1).expand(b, n_depth, 1)  # (B, D, 1)
                     profile = torch.cat([profile, fourier, year_ch], dim=-1)  # (B, D, 22)
                 if use_flp:
-                    # FourierBGC's forward signature: (profile, depth, day, lat, lon, year)
                     pred = model(profile, depth_levels,
-                                 day_rad.to(device), lat.to(device),
-                                 lon.to(device), year.to(device)).squeeze()
+                                 day_rad.to(device), year.to(device),
+                                 lat.to(device), lon.to(device)).squeeze()
                 elif use_mlpcoord:
                     # PPCon's own encoder signature; four raw scalars, each
                     # through its own MLP inside the model.
@@ -173,14 +172,14 @@ def per_profile_rmse(model, dataset, depth_levels, target_var, device, is_ppcon=
 
 def summarize(records):
     overall = np.mean([r["rmse"] for r in records])
-    print(f"\noverall test RMSE (per-profile, pooled across whole test set): {overall:.4f}")
+    print(f"\noverall test RMSE (per-profile, pooled across whole test set): {overall:.6g}")
     print("(compare directly to PPCon's Appendix B Table B1 number)\n")
 
     print("by region:")
     for name in REGIONS:
         vals = [r["rmse"] for r in records if assign_region(r["lat"], r["lon"]) == name]
         if vals:
-            print(f"  {name:4s}  rmse {np.mean(vals):.4f}   n={len(vals)}")
+            print(f"  {name:4s}  rmse {np.mean(vals):.6g}   n={len(vals)}")
         else:
             print(f"  {name:4s}  no samples in this region")
 
@@ -188,7 +187,7 @@ def summarize(records):
     for name in SEASONS:
         vals = [r["rmse"] for r in records if assign_season(r["day"]) == name]
         if vals:
-            print(f"  {name:4s}  rmse {np.mean(vals):.4f}   n={len(vals)}")
+            print(f"  {name:4s}  rmse {np.mean(vals):.6g}   n={len(vals)}")
         else:
             print(f"  {name:4s}  no samples in this season")
 

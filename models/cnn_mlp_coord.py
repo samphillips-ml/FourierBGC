@@ -50,10 +50,7 @@ class CNNMLPCoord(Conv1dMed):
         self.mlp_lon = _ppcon_mlp()
 
     def forward(self, profile, depth_levels, day_rad, year, lat, lon):
-        # NOTE the argument order: (day_rad, year, lat, lon). It differs from
-        # FourierBGC's (day_rad, lat, lon, year). Both are preserved as-is
-        # because they match the saved checkpoints' training-time call sites;
-        # unifying them is a behaviour change, not a rename.
+        # Argument order follows the paper's Eq. (2), c = (d, t, phi, lambda).
         if self.normalize:
             from helpers.scalar_norm import normalize_scalars
             lat, lon, day_rad, year = normalize_scalars(lat, lon, day_rad, year)

@@ -161,7 +161,7 @@ def train_ppcon_no_scalar(train_loader, val_loader, epoch, lr, dp_rate, lambda_l
 
         print(f"[==== EPOCH]: {ep + 1}, [AVERAGE LOSS]: {avg_train_loss:.5f}")
         f.write(f"[EPOCH]: {ep + 1}, [LOSS]: {avg_train_loss:.5f} \n")
-        f_mse_train.write(f"[EPOCH]: {ep + 1}, [LOSS]: {avg_train_mse:.4f} \n")
+        f_mse_train.write(f"[EPOCH]: {ep + 1}, [LOSS]: {avg_train_mse:.6g} \n")
 
         # early_stopping needs the training loss to check if it has decreased,
         # and if it has, it will make a checkpoint of the current model
@@ -225,7 +225,7 @@ def train_ppcon_no_scalar(train_loader, val_loader, epoch, lr, dp_rate, lambda_l
 
             print(f"[==== EPOCH]: {ep + 1}, [AVERAGE TEST LOSS]: {avg_test_loss:.5f}")
             f_test.write(f"[EPOCH]: {ep + 1}, [TEST LOSS]: {avg_test_loss:.5f} \n")
-            f_mse_test.write(f"[EPOCH]: {ep + 1}, [TEST LOSS]: {avg_test_mse:.4f} \n")
+            f_mse_test.write(f"[EPOCH]: {ep + 1}, [TEST LOSS]: {avg_test_mse:.6g} \n")
 
     f.close()
     f_test.close()

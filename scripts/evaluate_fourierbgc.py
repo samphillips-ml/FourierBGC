@@ -47,7 +47,7 @@ def per_profile_rmse(model, dataset, depth_levels, device, target_var):
             profile = torch.stack([temp, psal, doxy], dim=-1).to(device)
             day_rad_d, lat_d, lon_d = day_rad.to(device), lat.to(device), lon.to(device)
             year_d = year.to(device)
-            pred = model(profile, depth_levels, day_rad_d, lat_d, lon_d, year_d).squeeze()
+            pred = model(profile, depth_levels, day_rad_d, year_d, lat_d, lon_d).squeeze()
             true = target.squeeze().to(device)
 
             if target_var == "NITRATE":
@@ -93,12 +93,12 @@ def main():
 
     records = per_profile_rmse(model, test_ds, depth_levels, device, args.target_var)
     overall = float(np.mean([r["rmse"] for r in records]))
-    print(f"overall test RMSE: {overall:.4f}  (n={len(records)})")
+    print(f"overall test RMSE: {overall:.6g}  (n={len(records)})")
     for name, (val, n) in region_rmse(records).items():
         if val is None:
             print(f"  {name:4s}  no samples in this region")
         else:
-            print(f"  {name:4s}  rmse {val:.4f}   n={n}")
+            print(f"  {name:4s}  rmse {val:.6g}   n={n}")
 
 
 if __name__ == "__main__":

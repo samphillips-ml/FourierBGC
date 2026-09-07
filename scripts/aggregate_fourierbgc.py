@@ -106,16 +106,16 @@ def main():
                 region_per_seed[name].append(val)
                 n_per_region[name] = n
 
-        print(f"seed {seed}: overall {overall:.4f}")
+        print(f"seed {seed}: overall {overall:.6g}")
 
     overall_arr = np.array(overall_per_seed)
     print(f"\nFourierBGC {args.target_var} overall test RMSE: "
-          f"{overall_arr.mean():.4f} +/- {overall_arr.std(ddof=1):.4f}  (n={len(SEEDS)} seeds)")
+          f"{overall_arr.mean():.6g} +/- {overall_arr.std(ddof=1):.6g}  (n={len(SEEDS)} seeds)")
 
     print("\nLocked comparison numbers:")
     for name, (mean, sd) in LOCKED_OVERALL[args.target_var].items():
-        sd_str = f" +/- {sd:.4f}" if sd is not None else ""
-        print(f"  {name:24s}: {mean:.4f}{sd_str}")
+        sd_str = f" +/- {sd:.6g}" if sd is not None else ""
+        print(f"  {name:24s}: {mean:.6g}{sd_str}")
 
     print("\nper-region RMSE (mean +/- SD across seeds):")
     for name in REGIONS:
@@ -125,10 +125,10 @@ def main():
             continue
         arr = np.array(vals)
         n = n_per_region.get(name, "?")
-        print(f"  {name:4s}  learned-proj {arr.mean():.4f} +/- {arr.std(ddof=1):.4f}   n={n}")
+        print(f"  {name:4s}  learned-proj {arr.mean():.6g} +/- {arr.std(ddof=1):.6g}   n={n}")
         for cname, (cmean, csd) in LOCKED_REGION[args.target_var][name].items():
-            csd_str = f" +/- {csd:.4f}" if csd is not None else ""
-            print(f"        {cname:24s}: {cmean:.4f}{csd_str}")
+            csd_str = f" +/- {csd:.6g}" if csd is not None else ""
+            print(f"        {cname:24s}: {cmean:.6g}{csd_str}")
 
 
 if __name__ == "__main__":
