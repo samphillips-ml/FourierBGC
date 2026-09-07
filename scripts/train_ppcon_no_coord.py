@@ -1,8 +1,10 @@
 """
-Mirrors third_party/ppcon/ppcon/run_model.py's run_training/CLI, but calls
-train_ppcon_no_scalar() instead of train_model() and skips plot_profiles()
-at the end (plot_profiles imports MLPDay/Conv1dMed from ppcon.train.train
-and is built around the 7-channel scalar+T/S/O concatenation, so it isn't
+I mirrored third_party/ppcon/ppcon/run_model.py's run_training/CLI.
+
+The differences I made are: 
+train_ppcon_no_scalar() instead of train_model()
+skips plot_profiles() at the end (plot_profiles imports MLPDay/Conv1dMed 
+from ppcon.train.train and is built around the 7-channel scalar+T/S/O concatenation, so it isn't
 compatible with a 3-channel-only run; evaluate.py is the actual eval path
 used for this ablation).
 
@@ -10,6 +12,9 @@ Results are saved under RESULTS_DIR = ~/ppcon_results_no_scalar/<VARIABLE>/,
 mirroring PPCon's own ~/ppcon_results/<VARIABLE>/ convention (config.py),
 just under a different home-dir folder so it never collides with PPCon's
 real results.
+
+This file is the only one in scripts/ just to make sure its clear that its not a helper,
+but also not part of the common train.py at the root
 """
 import os
 import random
