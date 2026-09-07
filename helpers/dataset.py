@@ -1,17 +1,13 @@
 """
-PPCon's own FloatDataset, adapted from github.com/gpietrop/PPCon (MIT license,
-see LICENSE). Kept faithful to their training behavior: the validity label is
-computed but discarded, exactly as in their own train.py, which never used it
-either. The only change is renaming the hardcoded "nitrate" variable, since
-this loads CHLA and BBP700 too, that's a pure naming fix with no effect on
-values or computation.
+PPCon's FloatDataset, from github.com/gpietrop/PPCon (MIT). I maintained the 
+behavior of the code, in order to preserve the validity of our comparison
 
-NOTE: their __len__ is off by one (counts the index/label column as a sample),
-which makes the last index silently return a duplicate of the second-to-last
-profile (confirmed directly against their actual NITRATE train CSV). Left in
-here for 1:1 fidelity, since PPCon's own training ran with this duplicate too.
-One repeated real sample out of ~2500 profiles, not worth losing sleep over,
-but worth a one-line note in the methods section either way.
+Two specfic characteristics are deliberately preserved from PPcon. First, the validity 
+label is computed and then thrown away, so the label plumbing below is dead code. 
+Second, __len__ counts the index column as a profile, so the last index returns a duplicate of
+the second-to-last -- which is why the paper's denominators are 626/945/948 and
+not 625/944/947. Their own get_reconstruction has the same bug, so their
+published RMSE carries the duplicate too.
 """
 import pandas as pd
 import torch

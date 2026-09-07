@@ -1,8 +1,7 @@
 """
-PPConNoScalar's training function. Near-verbatim copy of
-third_party/ppcon/ppcon/train/train.py's train_model, with exactly five
-structural changes from the original, all driven by removing the four
-scalar MLP inputs (day_rad, year, lat, lon):
+PPCon-NoCoord's training function. Near-verbatim copy of
+third_party/ppcon/ppcon/train/train.py's train_model, with five structural
+changes, all from removing the four scalar MLP inputs (day_rad, year, lat, lon):
 
   1. no MLPDay/MLPYear/MLPLat/MLPLon instantiation
   2. no MLP .to(device) calls
@@ -10,18 +9,12 @@ scalar MLP inputs (day_rad, year, lat, lon):
   4. no MLP forward passes (in either the training or validation loop)
   5. torch.cat takes (temp, psal, doxy) -- 3 channels, not 7
 
-Consequences of removing the MLPs: only model_conv_{epoch}.pt is saved per
-snapshot (not five state dicts), and the peak_difference term is dropped
-(attention_max is always 0 in how PPCon was actually run, so this isn't a
-behavioral change). Everything else -- Adadelta, the three-term loss (MSE +
-L2 + smoothness), EarlyStopping instantiation, snaperiod logic, loss file
-writing, print formats -- is preserved exactly from train_model.
+Everything else is preserved from train_model. Further explanation of the
+changes can be found in the paper.
 
-Conv1dMed's in_channels is a module-level constant in conv1med_dp.py (not a
-constructor arg), so it's monkeypatched to 3 only for the duration of model
-construction, then restored, so this process can still construct PPCon's
-real 7-channel Conv1dMed elsewhere (e.g. via ppcon_eval.py) without
-cross-talk.
+Conv1dMed's in_channels is a module-level constant rather than a constructor
+argument, so it is set to 3 for the duration of model construction and then
+restored.
 """
 import os
 import sys

@@ -1,15 +1,6 @@
 """
-Loads PPCon baseline checkpoints (vendored, unmodified, in third_party/ppcon/)
-and reproduces their forward pass for evaluate.py. See PPCON_PROVENANCE.md
-for where ppcon_baseline/ came from; nothing in that directory is touched
-here, it's only imported from.
-
-Forward-pass concatenation order matches third_party/ppcon/ppcon/train/train.py's
-train_model (both the training and testing loops): point-wise inputs each go
-through their own MLP, get unsqueezed+transposed to (B, 1, D), are concatenated
-with the similarly-transposed temp/psal/doxy as
-(day, year, lat, lon, temp, psal, doxy) along the channel dim, then cast to
-float and passed through Conv1dMed.
+Loads PPCon's released checkpoints and reproduces their forward pass for
+evaluate.py. Nothing in third_party/ppcon/ is modified.
 """
 import os
 import sys
