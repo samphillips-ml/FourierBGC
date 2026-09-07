@@ -48,3 +48,6 @@ more/
 cnn_mlpcoord/
 results/
 results-tmp/
+
+# SLURM job scripts removed; run commands documented in README.md
+slurm/
