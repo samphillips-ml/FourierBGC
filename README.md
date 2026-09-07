@@ -100,6 +100,20 @@ documents a known discrepancy in Table 7's season rows.
   `(day_rad, lat, lon, year)`. Both match the call sites their checkpoints were trained
   under, so unifying them is a behaviour change, not a rename.
 
+## History
+
+The reorganization was done with `git mv`, so `git log --follow` traces most files back
+through their renames. Two exceptions, where the content changed too much for git's rename
+detection: `models/backbone.py` and `models/ppcon_no_coord.py`, which came from `models.py`
+and `ppcon_no_scalar_eval.py` respectively. Their history is still in the repository, reachable
+at the old paths:
+
+    git log --all -- models.py
+    git log --all -- ppcon_no_scalar_eval.py
+
+The three commits that make up the reorganization are `a21c3d9` (snapshot), `afd3e87` (SLURM
+scripts removed) and `a2eacbe` (the move itself).
+
 ## Provenance
 
 Training was run on the University of North Carolina at Charlotte URC cluster under SLURM.
