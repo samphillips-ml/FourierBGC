@@ -21,21 +21,30 @@ env/
 # Jupyter
 .ipynb_checkpoints/
 
-# training artifacts
-results/
-*.pt
-*.pth
-*.ckpt
-
-
 # editor
 .vscode/
 .idea/
 *.swp
 
-# slurm scripts
-slurm/*
+# ---------------------------------------------------------------
+# Paper: Overleaf is the source of truth, never version-controlled here
+# ---------------------------------------------------------------
+paper/
 
-# temporary scripts
-visualizations/*
-spatial_coverage.py
+# ---------------------------------------------------------------
+# Checkpoints and result trees.
+# GMD requires a DOI-issuing archive (Zenodo); GitHub alone does not
+# satisfy the code-and-data policy. Checkpoints are therefore deposited
+# to Zenodo, not tracked here. See RELEASE.md for the manifest that maps
+# every table cell in the paper to its archived checkpoint.
+# ---------------------------------------------------------------
+*.pt
+*.pth
+*.ckpt
+
+cluster-output/
+local-output/
+more/
+cnn_mlpcoord/
+results/
+results-tmp/
