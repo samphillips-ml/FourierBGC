@@ -15,7 +15,7 @@ pip install -r requirements.txt
 ## Layout
 
 ```
-data/            PPCon's published train/test splits; every model reads from here
+data/            PPCon's published train/test splits; every model reads from here except PPCon-NoCoord's training, which reads the identical copy vendored under third_party/
 models/          all model variants, one file each, plus the shared backbone
 helpers/         dataset loader, Fourier basis, z-score constants, seeding
 scripts/         the two training entry points that are not train.py
