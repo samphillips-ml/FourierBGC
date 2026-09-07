@@ -1,7 +1,10 @@
 """
 Trains the models in the ablation spine under the common recipe: Adam at
 1e-3, five-epoch linear warmup then cosine decay, gradient clipping at max
-norm 1.0, 100 epochs, batch size 32.
+norm 1.0, 100 epochs, batch size 32. I should note that this regime
+is not tuned to this dataset - it was chosen once and maintained to 
+focus on the effect of coordinate representations. If used in
+another project, it would probably be a good idea to revisit these.
 
 Covers CNN-NoCoord, CNN-RawCoord, CNN-MLPCoord and FourierBGC-Broadcast.
 The other two models have their own entry points, because their training

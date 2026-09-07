@@ -4,26 +4,7 @@ analysis/utils_analysis.py in github.com/gpietrop/PPCon (MIT). Per-profile
 RMSE (sqrt of that profile's own MSE across all 200 depth points), then
 averaged within region and season buckets, weighted by sample count, not
 pooled across all points first. Also reports a single overall number
-(per-profile RMSE averaged across the whole test set, no bucketing), which
-is the form Appendix B's Table B1 number (0.52 for nitrate) is in.
-
-    python evaluate.py --model transformer --target_var NITRATE \
-        --checkpoint results/NITRATE/transformer/best.pt
-
-    python evaluate.py --model transformer_scalar --target_var NITRATE \
-        --checkpoint results/NITRATE/transformer_scalar/best.pt
-
-    python evaluate.py --model cnn_scalar --target_var NITRATE \
-        --checkpoint results/NITRATE/cnn_scalar/best.pt
-
-    python evaluate.py --model fourierbgc --target_var NITRATE \
-        --checkpoint results/NITRATE/fourierbgc/best.pt
-
-    python evaluate.py --model ppcon --target_var NITRATE \
-        --checkpoint_dir results_ppcon/NITRATE/2024-01-01/model --epoch 200
-
-    python evaluate.py --model ppcon_no_scalar --target_var NITRATE \
-        --checkpoint_dir ~/ppcon_results_no_scalar/NITRATE/model --epoch 200
+(per-profile RMSE averaged across the whole test set, no bucketing).
 """
 import argparse
 import os
