@@ -1,0 +1,6 @@
+overall test RMSE: 0.0641  (n=945)
+  NWM   rmse 0.0979   n=254
+  SWM   rmse 0.1102   n=52
+  TYR   rmse 0.0718   n=119
+  ION   rmse 0.0329   n=186
+  LEV   rmse 0.0409   n=218

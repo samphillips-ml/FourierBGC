@@ -1,18 +1,21 @@
 """
-Trains RawTransformerProbe, RawTransformerScalarProbe, RawCNNProbe,
-RawCNNScalarProbe, or FourierBGC on PPCon's own dataset. transformer/cnn use
-T/S/O only, no lat/lon/day/year. transformer_scalar/cnn_scalar add those four
-scalars back in, broadcast here as constant-valued depth channels, z-scored,
-then concatenated by the model after its backbone (see models.py) rather
-than at the input. fourierbgc instead fuses a bounded Fourier feature
-encoding of lat/lon/day_of_year (see fourier_features.py) at the input,
-year dropped entirely. PPCon's published RMSE is the comparison target, not
-something retrained here.
+Trains the models in the ablation spine under the common recipe: Adam at
+1e-3, five-epoch linear warmup then cosine decay, gradient clipping at max
+norm 1.0, 100 epochs, batch size 32.
 
-    python train.py --model transformer --target_var NITRATE
-    python train.py --model transformer_scalar --target_var NITRATE
-    python train.py --model cnn --target_var CHLA --epochs 100
-    python train.py --model fourierbgc --target_var NITRATE
+Covers CNN-NoCoord, CNN-RawCoord, CNN-MLPCoord and FourierBGC-Broadcast.
+The other two models have their own entry points, because their training
+differs: FourierBGC computes its Fourier projection inside the model
+(scripts/train_fourierbgc.py), and PPCon-NoCoord uses PPCon's own recipe
+rather than this one (scripts/train_ppcon_no_coord.py). PPCon itself is
+never retrained; its released checkpoint is evaluated directly.
+
+    python train.py --model cnn_no_coord         --target_var NITRATE --seed 0
+    python train.py --model cnn_raw_coord        --target_var CHLA    --seed 0
+    python train.py --model cnn_mlp_coord        --target_var BBP700  --seed 0
+    python train.py --model fourierbgc_broadcast --target_var NITRATE --seed 0
+
+Checkpoints land at results/{model}/{VAR}/ unless --save_dir overrides it.
 """
 import argparse
 import os
@@ -23,12 +26,11 @@ from torch.optim import Adam
 from torch.nn.functional import mse_loss
 from torch.utils.data import DataLoader
 
-from dataset import FloatDataset
-from fourier_features import compute_fourier_features
-from models import (RawTransformerProbe, RawTransformerScalarProbe, RawCNNProbe,
-                     RawCNNScalarProbe, FourierBGC, FourierBGCWithYear)
-from scalar_norm import normalize_scalars, SCALAR_STATS
-from seeding import set_seed, seeded_generator
+from helpers.dataset import FloatDataset
+from helpers.fourier_features import compute_fourier_features
+from helpers.scalar_norm import normalize_scalars, SCALAR_STATS
+from helpers.seeding import set_seed, seeded_generator
+from models import make_model, resolve
 
 # PPCon's own depth grids (dict.py): nitrate 0-1000m @ 5m, chla/bbp700 0-200m @ 1m.
 # both land at 200 points but they're physically different distances.
@@ -41,24 +43,9 @@ DEPTH_GRIDS = {
 DATA_DIR = "data"
 
 
-def make_model(name):
-    if name == "transformer":
-        return RawTransformerProbe()
-    elif name == "transformer_scalar":
-        return RawTransformerScalarProbe()
-    elif name == "cnn":
-        return RawCNNProbe()
-    elif name == "cnn_scalar":
-        return RawCNNScalarProbe()
-    elif name == "fourierbgc":
-        return FourierBGC()
-    elif name == "fourierbgc_with_year":
-        return FourierBGCWithYear()
-    raise ValueError(f"unknown model {name}")
-
-
 def run_epoch(model, loader, depth_levels, device, optimizer=None, max_grad_norm=1.0,
-              use_scalars=False, use_fourier=False, use_fourier_year=False):
+              use_scalars=False, use_fourier=False, use_fourier_year=False,
+              use_mlpcoord=False):
     train_mode = optimizer is not None
     model.train() if train_mode else model.eval()
 
@@ -74,25 +61,24 @@ def run_epoch(model, loader, depth_levels, device, optimizer=None, max_grad_norm
             if use_scalars:
                 # broadcast each (z-scored) scalar to a constant-valued depth
                 # channel; the model concatenates these after its backbone,
-                # not at the input (see models.py for why).
+                # not at the input (see models/cnn_raw_coord.py for why).
                 b = profile.shape[0]
                 lat, lon, day_rad, year = normalize_scalars(lat, lon, day_rad, year)
                 scalars = torch.stack([lat, lon, day_rad, year], dim=-1).to(device)  # (B, 4)
                 scalars = scalars.view(b, 1, 4).expand(b, n_depth, 4)  # (B, D, 4)
             elif use_fourier:
                 # bounded Fourier encoding of lat/lon/day_of_year, fused at
-                # the input alongside T/S/O (see fourier_features.py and
-                # FourierBGC in models.py). year is not used.
+                # the input alongside T/S/O (see helpers/fourier_features.py). year is not used.
                 b = profile.shape[0]
                 day_rad, lat, lon = day_rad.to(device), lat.to(device), lon.to(device)
                 fourier = compute_fourier_features(day_rad, lat, lon)  # (B, 18)
                 fourier = fourier.view(b, 18, 1).expand(b, 18, n_depth).transpose(1, 2)  # (B, D, 18)
                 profile = torch.cat([profile, fourier], dim=-1)  # (B, D, 21)
             elif use_fourier_year:
-                # exploratory FourierBGCWithYear variant: FourierBGC's 21
+                # exploratory FourierBGCBroadcast variant: FourierBGC_Broadcast_NoYear's 21
                 # channels plus one raw (non-Fourier-encoded), z-scored year
                 # channel broadcast across depth, fused at the input, 22
-                # total. See models.py: FourierBGCWithYear.
+                # total. See models/fourierbgc_broadcast.py.
                 b = profile.shape[0]
                 day_rad, lat, lon = day_rad.to(device), lat.to(device), lon.to(device)
                 year = year.to(device)
@@ -103,7 +89,14 @@ def run_epoch(model, loader, depth_levels, device, optimizer=None, max_grad_norm
                 year_ch = year_z.view(b, 1, 1).expand(b, n_depth, 1)  # (B, D, 1)
                 profile = torch.cat([profile, fourier, year_ch], dim=-1)  # (B, D, 22)
 
-            output = model(profile, depth_levels, scalars)
+            if use_mlpcoord:
+                # PPCon's own encoder signature: four raw scalars, each through
+                # its own MLP inside the model (see models/cnn_mlp_coord.py).
+                output = model(profile, depth_levels,
+                               day_rad.to(device), year.to(device),
+                               lat.to(device), lon.to(device))
+            else:
+                output = model(profile, depth_levels, scalars)
             loss = mse_loss(output, target)
 
             if train_mode:
@@ -134,9 +127,13 @@ def make_scheduler(optimizer, total_epochs, warmup_epochs=5):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--model",
-                   choices=["transformer", "transformer_scalar", "cnn", "cnn_scalar", "fourierbgc",
-                            "fourierbgc_with_year"],
-                   required=True)
+                   choices=["cnn_no_coord", "cnn_raw_coord", "cnn_mlp_coord",
+                            "fourierbgc_broadcast", "cnn_mlp_coord_norm",
+                            # legacy aliases, kept so old commands keep working
+                            "cnn", "cnn_scalar", "cnn_mlpcoord", "fourierbgc_with_year"],
+                   required=True,
+                   help="see models/__init__.py for the paper-name mapping. FourierBGC is "
+                        "trained by scripts/train_fourierbgc.py, not here.")
     p.add_argument("--target_var", choices=["NITRATE", "CHLA", "BBP700"], required=True)
     p.add_argument("--epochs", type=int, default=100)
     p.add_argument("--lr", type=float, default=1e-3)
@@ -171,14 +168,16 @@ def main():
     test_loader = DataLoader(test_ds, batch_size=args.batch_size, shuffle=False)
 
     model = make_model(args.model).to(device)
-    use_scalars = args.model in ("transformer_scalar", "cnn_scalar")
-    use_fourier = args.model == "fourierbgc"
-    use_fourier_year = args.model == "fourierbgc_with_year"
+    key = resolve(args.model)
+    use_scalars = key == "cnn_raw_coord"
+    use_fourier = False  # the 21-channel no-year variant is not in the manuscript
+    use_fourier_year = key == "fourierbgc_broadcast"
+    use_mlpcoord = key in ("cnn_mlp_coord", "cnn_mlp_coord_norm")
     depth_levels = DEPTH_GRIDS[args.target_var].to(device)
     optimizer = Adam(model.parameters(), lr=args.lr)
     scheduler = make_scheduler(optimizer, args.epochs)
 
-    save_dir = args.save_dir or os.path.join(args.results_dir, args.target_var, args.model)
+    save_dir = args.save_dir or os.path.join(args.results_dir, resolve(args.model), args.target_var)
     os.makedirs(save_dir, exist_ok=True)
     log_path = os.path.join(save_dir, "log.txt")
 
@@ -187,10 +186,12 @@ def main():
         for ep in range(args.epochs):
             train_mse = run_epoch(model, train_loader, depth_levels, device, optimizer,
                                    use_scalars=use_scalars, use_fourier=use_fourier,
-                                   use_fourier_year=use_fourier_year)
+                                   use_fourier_year=use_fourier_year,
+                                   use_mlpcoord=use_mlpcoord)
             test_mse = run_epoch(model, test_loader, depth_levels, device, optimizer=None,
                                   use_scalars=use_scalars, use_fourier=use_fourier,
-                                  use_fourier_year=use_fourier_year)
+                                  use_fourier_year=use_fourier_year,
+                                  use_mlpcoord=use_mlpcoord)
             scheduler.step()
 
             line = (f"epoch {ep+1:4d}  train_mse {train_mse:.5f}  test_mse {test_mse:.5f}"

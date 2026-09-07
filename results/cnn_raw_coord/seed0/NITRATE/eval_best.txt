@@ -1,0 +1,18 @@
+
+overall test RMSE (per-profile, pooled across whole test set): 0.3436
+(compare directly to PPCon's Appendix B Table B1 number)
+
+by region:
+  NWM   rmse 0.3553   n=137
+  SWM   rmse 0.4263   n=9
+  TYR   rmse 0.2764   n=116
+  ION   rmse 0.2477   n=111
+  LEV   rmse 0.3955   n=163
+
+by season:
+  W     rmse 0.3020   n=146
+  SP    rmse 0.3395   n=159
+  SU    rmse 0.3872   n=161
+  A     rmse 0.3415   n=156
+
+note: 90/626 profiles fall outside all five region boxes, excluded from the regional breakdown (but included in 'overall')

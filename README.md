@@ -1,92 +1,107 @@
 # FourierBGC
 
-Code for *Fourier Feature Encoding for Spatiotemporal Inputs in CNN-Based Reconstruction of
-Biogeochemical Argo Profiles* (Phillips & Li).
+Code and checkpoints for *Fourier Feature Encoding for Spatiotemporal Inputs in CNN-Based
+Reconstruction of Biogeochemical Argo Profiles* (Phillips & Li).
 
-A controlled ablation over how spatiotemporal coordinates are represented, holding PPCon's
-convolutional backbone fixed. Seven models differ only in the coordinate encoding and, for two of
-them, the training procedure.
+A controlled ablation over how spatiotemporal coordinates are represented for reconstructing
+biogeochemical profiles from BGC-Argo floats. PPCon's convolutional backbone is held fixed
+across seven models that differ only in the coordinate encoding and, for two of them, the
+training procedure.
 
-> **Note.** This file documents the repository as it stands before the reorganization. Paths change
-> when `models/`, `helpers/` and `results/` land; this file is updated in the same commit.
+## Layout
+
+    data/           PPCon's published train/test splits, inherited unmodified
+    models/         one module per model in the ablation spine, plus the shared backbone
+    helpers/        dataset loader, Fourier basis, z-score constants, seeding, PPCon adapter
+    scripts/        the two training entry points that are not train.py
+    results/        every checkpoint behind every table (see results/MANIFEST.md)
+    third_party/    the vendored PPCon baseline, unmodified
+    visualizations/ figure-generating code and the figures themselves
+    archive/        full run trees and superseded runs; gitignored, not needed
+    train.py        common-recipe training
+    evaluate.py     evaluation, reproducing PPCon's own RMSE methodology
 
 ## Model name map
 
-The manuscript and the code use different names. This is the mapping.
+The manuscript and the code use different names. `models/__init__.py` holds the mapping;
+this is it in prose. Legacy flags still resolve, so older commands keep working.
 
-| Paper | `--model` flag | Class | Entry point |
-|---|---|---|---|
-| PPCon | `ppcon` | (vendored) | `evaluate.py` only, released checkpoint |
-| PPCon-NoCoord | `ppcon_no_scalar` | — | `ppcon_no_scalar/run.py` |
-| CNN-NoCoord | `cnn` | `RawCNNProbe` | `train.py` |
-| CNN-RawCoord | `cnn_scalar` | `RawCNNScalarProbe` | `train.py` |
-| CNN-MLPCoord | `cnn_mlpcoord` | `CNNMLPCoordProbe` | `train.py` |
-| FourierBGC-Broadcast | `fourierbgc_with_year` | `FourierBGCBroadcast` | `train.py` |
-| FourierBGC | `fourierbgc_learned` | `FourierBGC` | `fourier_learned_projection/run_train_with_year.py` |
+| Paper | Registry key | Legacy flag | Class | C | Encoder params |
+|---|---|---|---|---|---|
+| PPCon | `ppcon` | — | vendored | 7 | 158,800 |
+| PPCon-NoCoord | `ppcon_no_coord` | `ppcon_no_scalar` | loader, not a class | 3 | 0 |
+| CNN-NoCoord | `cnn_no_coord` | `cnn` | `CNNNoCoord` | 3 | 0 |
+| CNN-RawCoord | `cnn_raw_coord` | `cnn_scalar` | `CNNRawCoord` | 3 | 0 |
+| CNN-MLPCoord | `cnn_mlp_coord` | `cnn_mlpcoord` | `CNNMLPCoord` | 7 | 158,800 |
+| FourierBGC-Broadcast | `fourierbgc_broadcast` | `fourierbgc_with_year` | `FourierBGCBroadcast` | 22 | 0 |
+| FourierBGC | `fourierbgc` | `fourierbgc_learned` | `FourierBGC` | 5 | 19,152 |
 
-`fourierbgc` (21 channels, no year) and the two `transformer*` flags are earlier variants that do not
-appear in the manuscript.
+`C` is the backbone input channel count.
 
 ## Data
 
 `data/{NITRATE,CHLA,BBP700}/float_ds_sf_{train,test}.csv`, inherited unmodified from PPCon's
-published splits. Not reprocessed here. Every model reads from this one location.
+published splits, which in turn apply the quality control of Amadio et al. (2023). Not
+reprocessed here. Every model reads from this one location.
 
 ## Training
 
-All models we train ourselves use the common recipe: Adam, lr 1e-3, 5-epoch linear warmup then
-cosine decay, gradient clipping at max norm 1.0, 100 epochs, batch size 32, five seeds (0-4).
+The common recipe: Adam at 1e-3, five-epoch linear warmup then cosine decay, gradient
+clipping at max norm 1.0, 100 epochs, batch size 32, five seeds (0–4).
 
-    # CNN-NoCoord, CNN-RawCoord, CNN-MLPCoord, FourierBGC-Broadcast
-    python train.py --model {cnn|cnn_scalar|cnn_mlpcoord|fourierbgc_with_year} \
-        --target_var {NITRATE|CHLA|BBP700} --epochs 100 --seed {0..4} \
-        --save_dir results/{model}/seed{N}/{VAR}/model
+    python train.py --model cnn_no_coord         --target_var NITRATE --seed 0
+    python train.py --model cnn_raw_coord        --target_var CHLA    --seed 0
+    python train.py --model cnn_mlp_coord        --target_var BBP700  --seed 0
+    python train.py --model fourierbgc_broadcast --target_var NITRATE --seed 0
 
-    # FourierBGC (separate entry point)
-    python fourier_learned_projection/run_train_with_year.py \
-        --target_var {VAR} --epochs 100 --seed {N} --save_dir {dir}
+FourierBGC computes its Fourier projection inside the model, so it has its own entry point:
 
-PPCon-NoCoord uses PPCon's own recipe (Adadelta, lr 1.0, three-term loss, no clipping or schedule)
-and PPCon's per-variable epoch counts, 100 / 150 / 125 for NITRATE / CHLA / BBP700:
+    python scripts/train_fourierbgc.py --target_var NITRATE --epochs 100 --seed 0
 
-    python ppcon_no_scalar/run.py --variable {VAR} --epochs {100|150|125} \
-        --seed {N} --save_dir {dir}
+PPCon-NoCoord uses PPCon's own recipe (Adadelta at lr 1.0, three-term loss, no clipping or
+schedule) and PPCon's per-variable epoch counts, 100 / 150 / 125:
+
+    python scripts/train_ppcon_no_coord.py --variable NITRATE --epochs 100 --seed 0
 
 PPCon itself is never retrained; the authors' released checkpoint is evaluated directly.
 
 ## Evaluation
 
-Reproduces PPCon's own RMSE methodology (per-profile RMSE, then averaged within region and season
-buckets). Region and season definitions follow PPCon's released evaluation code.
+Reproduces PPCon's own RMSE methodology: per-profile RMSE, then averaged within region and
+season buckets, weighted by count. Region and season definitions follow PPCon's released
+evaluation code, not their Table 4, which disagrees with it on the Ionian Sea boundary.
 
-    python evaluate.py --model {flag} --target_var {VAR} --checkpoint {dir}/best.pt
+    python evaluate.py --model fourierbgc --target_var CHLA \
+        --checkpoint results/fourierbgc/seed0/CHLA/best.pt
 
-    # the two checkpoint-directory models
-    python evaluate.py --model ppcon --target_var {VAR} \
-        --checkpoint_dir ppcon_baseline/ppcon/results/{VAR}/{date}/model --epoch {100|150|125}
-    python evaluate.py --model ppcon_no_scalar --target_var {VAR} \
-        --checkpoint_dir {dir}/model --epoch {100|150|125}
+    python evaluate.py --model ppcon --target_var CHLA \
+        --checkpoint_dir results/ppcon/CHLA/model --epoch 150
 
-    # FourierBGC
-    python fourier_learned_projection/run_evaluate_with_year.py \
-        --target_var {VAR} --checkpoint {dir}/best.pt
+    python evaluate.py --model ppcon_no_coord --target_var CHLA \
+        --checkpoint_dir results/ppcon_no_coord/seed0/CHLA/model --epoch 150
 
-**Caveat:** `evaluate.py` prints RMSE with `%.4f`. For bbp700, whose values are around 2e-4, that is
-a single significant figure and every printed value collapses to `0.0002`. Read bbp700 at full
-precision, not from this output.
+**Caveat:** `evaluate.py` prints RMSE with `%.4f`. bbp700 values are around 2e-4, so that is a
+single significant figure and every printed bbp700 value collapses to `0.0002`. This has
+caused two real errors. Read bbp700 at full precision.
 
-## Reproducing the manuscript's numbers
+## Reproducing the manuscript
 
-The 105 checkpoints behind every table are deposited to Zenodo, not tracked here; GMD's code and data
-policy requires a DOI-issuing archive and states GitHub is unsuitable for archiving frozen versions.
-`RELEASE.md` maps each table cell to its archived checkpoint.
+`results/` holds all 105 checkpoints, one per model × variable × seed. `results/MANIFEST.md`
+maps each to the table it backs, records the split provenance of the CNN-MLPCoord row, and
+documents a known discrepancy in Table 7's season rows.
 
-Note that CNN-MLPCoord's published row draws on two different training batches: chlorophyll-*a* and
-nitrate from one, bbp700 from the other. A separate model is trained per target, so this is
-well-defined, but neither batch alone reproduces the row.
+## Known issues
 
-## Provenance of this repository
+- `evaluate.py`'s `summarize()` prints `%.4f`; should be `%.6g` (see caveat above).
+- `third_party/ppcon/ppcon/config.py` and `scripts/train_ppcon_no_coord.py` hardcode
+  `Path.home()` as the output root, inherited from PPCon. Retraining will write to the home
+  directory rather than `results/` until that is changed.
+- `CNNMLPCoord.forward` takes `(day_rad, year, lat, lon)` while `FourierBGC.forward` takes
+  `(day_rad, lat, lon, year)`. Both match the call sites their checkpoints were trained
+  under, so unifying them is a behaviour change, not a rename.
 
-Training was run on the University of North Carolina at Charlotte URC cluster under SLURM. Those job
-scripts are removed as of this commit; the commands above are what they ran. See commit `a21c3d9`
-for the originals.
+## Provenance
+
+Training was run on the University of North Carolina at Charlotte URC cluster under SLURM.
+Those job scripts were removed during reorganization; the commands above are what they ran.
+See commit `a21c3d9` for the originals.

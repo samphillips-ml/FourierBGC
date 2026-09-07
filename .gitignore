@@ -32,22 +32,23 @@ env/
 paper/
 
 # ---------------------------------------------------------------
-# Checkpoints and result trees.
-# GMD requires a DOI-issuing archive (Zenodo); GitHub alone does not
-# satisfy the code-and-data policy. Checkpoints are therefore deposited
-# to Zenodo, not tracked here. See RELEASE.md for the manifest that maps
-# every table cell in the paper to its archived checkpoint.
+# Checkpoints. Not tracked by default; results/ is re-included below.
 # ---------------------------------------------------------------
 *.pt
 *.pth
 *.ckpt
 
-cluster-output/
-local-output/
-more/
-cnn_mlpcoord/
-results/
-results-tmp/
+# ---------------------------------------------------------------
+# archive/ holds the full run trees, superseded run batches, and strays
+# collected from the home directory. Every checkpoint the manuscript cites
+# has been copied into results/ and IS tracked; what remains in archive/ is
+# redundant final.pt files, intermediate epoch snapshots, and runs that fed
+# no table. See archive/README.md.
+# ---------------------------------------------------------------
+archive/
 
-# SLURM job scripts removed; run commands documented in README.md
-slurm/
+# ---------------------------------------------------------------
+# Re-included: results/ holds every checkpoint behind every table --
+# one per model x variable x seed, plus PPCon's released checkpoint.
+# ---------------------------------------------------------------
+!results/**/*.pt
