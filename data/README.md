@@ -1,3 +1,6 @@
+Data originates from Amadio et al. (2023), doi:10.5281/zenodo.10391759, CC-BY 4.0,
+via PPCon's published repository (github.com/gpietrop/ppcon), unmodified.
+
 Some notes on the copied dataset from PPcon:
 
 1. Profiles are columns, not rows
