@@ -21,7 +21,6 @@ helpers/         dataset loader, Fourier basis, z-score constants, seeding
 scripts/         PPCon-NoCoord's trainer, which uses PPCon's recipe not ours
 results/         all 105 checkpoints behind the paper's tables. 5 seeds for every variant.
 third_party/     the PPCon baseline, vendored unmodified (MIT)
-visualizations/  figure code and the figures themselves
 archive/         superseded runs; not tracked, not needed
 ```
 
